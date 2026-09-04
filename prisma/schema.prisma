@@ -1,0 +1,289 @@
+// ChatWise database schema — the source of truth for the data model.
+// See docs/Architecture.md §4 for the high-level entity list.
+//
+// Phase 0 defined the two base tables: User (who logs in) and Business (the
+// company that user runs). Phase 1 added the tables NextAuth needs to remember
+// logins. Phase 3 adds the account's single agent and its single WhatsApp
+// connection. Later phases add the conversation, lead, campaign and billing
+// tables.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  // The connection string is read from DATABASE_URL via prisma7.config.ts,
+  // never hardcoded here (docs/Rules.md §3).
+}
+
+/// A person who signs up for ChatWise. One user owns one business.
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  /// Set once the person has confirmed their email address. Google sign-ins
+  /// arrive already verified.
+  emailVerified DateTime?
+  /// Hashed password — never the password itself (docs/Rules.md §3).
+  /// Null for accounts that only sign in with Google.
+  passwordHash  String?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  business Business?
+  accounts Account[]
+  sessions Session[]
+
+  @@map("users")
+}
+
+// ─── Tables NextAuth needs ──────────────────────────────────────────────────
+// The three models below are NextAuth's, and their field names are fixed by it
+// — including the snake_case ones, which come from the OAuth spec. Don't rename
+// them.
+
+/// Links a user to a sign-in provider they used, e.g. their Google account.
+/// A user signing in with email and password has no row here.
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+/// A signed-in browser session. ChatWise keeps sessions in an encrypted cookie
+/// rather than in this table (see lib/auth.ts), but NextAuth's Prisma adapter
+/// requires the table to exist.
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+/// Short-lived tokens for email verification and password-reset links.
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+  @@map("verification_tokens")
+}
+
+/// The business profile collected during onboarding (docs/PRD.md §3, Step C).
+/// Exactly one business per user account — the one-setup-per-account rule in
+/// docs/PRD.md §3.1 hangs off this row.
+model Business {
+  id     String @id @default(cuid())
+  /// Unique: an account has exactly one business.
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Null until setup Step C, because the row is created when someone starts
+  /// the wizard — before we've asked them anything.
+  name      String?
+  industry  String?
+  /// Free-text description of what the business sells or does.
+  about     String?
+  timezone  String   @default("UTC")
+  /// Set when the wizard is finished. Null means setup is still in progress,
+  /// which is what sends someone back into it.
+  onboardingCompletedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agent      AgentInstance?
+  connection WhatsAppConnection?
+
+  @@map("businesses")
+}
+
+// ─── The one-setup-per-account rule ─────────────────────────────────────────
+// docs/PRD.md §3.1 and docs/Rules.md §6: an account runs exactly one agent on
+// exactly one connection type. Both models below key off `businessId` with a
+// UNIQUE constraint, so a second row is rejected by PostgreSQL itself — not
+// merely discouraged by the screens. Switching agent or connection updates the
+// single row; it never adds a second.
+
+/// Which agents a customer can choose. Kept in step with /bots — every value
+/// here has a folder there.
+///
+/// There is deliberately no CRM value: the CRM agent runs in the background
+/// alongside the chosen agent and is never a selectable option, so it must
+/// never be stored as one.
+enum BotType {
+  RECEPTIONIST
+  LEAD_QUALIFIER
+  APPOINTMENT
+  SALES
+  SUPPORT
+  FOLLOW_UP
+  PERSONAL_SHOPPER
+  FEEDBACK
+  INTERNAL
+}
+
+enum ConnectionType {
+  /// Free tier — the customer scans a QR code, like WhatsApp Web.
+  QR
+  /// Paid tier — the official WhatsApp Business Cloud API.
+  API
+}
+
+enum ConnectionStatus {
+  NOT_CONNECTED
+  CONNECTING
+  CONNECTED
+  RECONNECTING
+  DISCONNECTED
+  ERROR
+}
+
+/// The single agent this business runs.
+model AgentInstance {
+  id String @id @default(cuid())
+  /// UNIQUE — one agent per business, enforced by the database.
+  businessId String   @unique
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  botType BotType
+
+  /// The answers to that agent's own setup questions, keyed by question id.
+  /// The questions themselves live in /bots/<agent>/config-schema.ts, so this
+  /// stays correct as agents gain or lose questions.
+  config Json @default("{}")
+
+  // ── How it should behave (setup Step D) ──
+  /// How it should come across, e.g. "friendly", "formal".
+  tone            String?
+  /// The language it replies in.
+  language        String?
+  /// When it should stop and fetch a person. Every agent must have a way out
+  /// to a human (docs/Rules.md §5).
+  escalationRules String?
+  /// Who the customer is handed to, in words the end customer will see.
+  escalateTo      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("agent_instances")
+}
+
+/// The single WhatsApp connection this business uses. Either QR or API, never
+/// both — one row, and `type` holds the choice.
+model WhatsAppConnection {
+  id String @id @default(cuid())
+  /// UNIQUE — one connection per business, enforced by the database.
+  businessId String   @unique
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  type   ConnectionType
+  status ConnectionStatus @default(NOT_CONNECTED)
+
+  /// The connected number, once there is one. Shown in the dashboard.
+  phoneNumber String?
+
+  /// Nothing secret lives on this row. The session itself is encrypted and
+  /// kept in WhatsAppSession; API credentials arrive in Phase 6
+  /// (docs/Rules.md §3).
+  lastConnectedAt DateTime?
+  /// The last failure, in words a customer can act on — never a stack trace.
+  lastError       String?
+
+  /// Proof the pipe works, and the basis of the health indicator. Counting is
+  /// deliberate: we record that a message arrived, not what it said
+  /// (docs/Rules.md §4 — don't log customers' private conversations).
+  messagesReceived Int       @default(0)
+  messagesSent     Int       @default(0)
+  lastMessageAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  session     WhatsAppSession?
+  credentials WhatsAppApiCredential?
+
+  @@map("whatsapp_connections")
+}
+
+/// The saved WhatsApp Web session for a free-tier connection — what lets a
+/// customer stay connected without rescanning the QR code every time.
+///
+/// This is effectively a key to that business's WhatsApp account, so it is
+/// stored encrypted and never leaves the server (docs/Rules.md §3). The app
+/// itself never reads it; only the worker that owns that customer's session
+/// does.
+model WhatsAppSession {
+  id String @id @default(cuid())
+  /// UNIQUE — one saved session per connection.
+  connectionId String             @unique
+  connection   WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  /// AES-256-GCM ciphertext (see lib/encryption.ts). Never plain text.
+  data Bytes
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("whatsapp_sessions")
+}
+
+/// The Meta credentials for a paid-tier connection.
+///
+/// The access token is a permanent key to send messages as that business, so
+/// like the QR session it is encrypted and never leaves the server
+/// (docs/Rules.md §3). Nothing here is ever sent to the browser — not even
+/// masked; the screen only says whether credentials are saved.
+model WhatsAppApiCredential {
+  id String @id @default(cuid())
+  /// UNIQUE — one set of credentials per connection.
+  connectionId String             @unique
+  connection   WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  /// Meta's id for the business phone number.
+  ///
+  /// UNIQUE across every account, because inbound webhooks all arrive at one
+  /// endpoint and this is what says which customer a message belongs to. Two
+  /// accounts claiming the same number would make that routing ambiguous.
+  phoneNumberId String @unique
+
+  /// The WhatsApp Business Account the number belongs to. Optional — useful for
+  /// support, not needed to send.
+  businessAccountId String?
+
+  /// The human-readable number, for showing on the dashboard. Not a secret.
+  displayPhoneNumber String?
+
+  /// AES-256-GCM ciphertext of the access token (see lib/encryption.ts).
+  accessToken Bytes
+
+  /// Set when we last successfully called Meta with these credentials.
+  verifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("whatsapp_api_credentials")
+}
