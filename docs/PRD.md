@@ -31,7 +31,7 @@ All three are non-technical. They should never need to see code, JSON, or a term
 5. **WhatsApp connection screen** — inside the dashboard:
    - If API tier: form to enter WhatsApp Business API credentials (Meta App ID, phone number ID, access token) with a step-by-step guide.
    - If Free tier: QR code shown on screen, user scans with their phone's WhatsApp, session persists per user.
-6. **Billing** — subscription checkout (plan selection, payment), managed via a billing provider (e.g. Stripe).
+6. **Billing** — subscription checkout (plan selection, payment), managed through Razorpay's hosted payment pages so no card details reach ChatWise.
 
 ### 3.1 Account Constraints (hard rules)
 
@@ -162,8 +162,8 @@ Every outbound bulk template must include (or the system must append) an **opt-o
 
 ## 10. Open Questions (flag to product owner before/while building)
 
-- Final pricing tiers and limits per plan
-- Which payment gateway (Stripe vs regional provider — relevant given a lot of the free tier audience may be in India per the ₹ pricing example)
+- ~~Final pricing tiers and limits per plan~~ — **settled 2026-09-05.** Four plans: Free, Starter ₹999, Growth ₹1,499, Pro ₹2,499 a month. The prices are the owner's; the limits behind each one were chosen in code and live in `lib/plans.ts`, which is the single file to edit to change any of them.
+- ~~Which payment gateway~~ — **settled 2026-09-05: Razorpay.** Every call to it is in `lib/razorpay.ts`.
 - Exact Meta WhatsApp Business API onboarding requirements (Meta approval process, business verification) — user-facing copy for the "Connect WhatsApp" screen should be written once this is confirmed
 - **Switching setup:** when a user wants to change their bot type or connection type (§3.1), what exactly happens — a full re-onboarding on the same account (wiping the old bot's config), an admin-assisted reset, or requiring a new account/subscription? Pick one before building the "My Bot" settings screen.
-- **CRM agent availability:** is the background CRM agent always included, or bundled only with certain plans?
+- ~~**CRM agent availability**~~ — **settled 2026-09-05: always included, on every plan including Free.** It says nothing to anybody and only keeps one record per contact up to date; making it a paid extra would mean a free account's leads screen was silently empty, which reads as broken rather than as an upsell.

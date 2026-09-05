@@ -92,15 +92,31 @@ export type StatusEvent = {
 };
 
 /**
- * A message arrived. Note it carries no message text: the inbox and the bots
- * are later phases, and until then there is no reason for the contents of
- * somebody's customer conversations to travel across a queue or into a log
- * (docs/Rules.md §4).
+ * A message arrived.
+ *
+ * This one carries what the customer said, because from Phase 7 there is
+ * somewhere for it to go: the agent has to read it to answer it, and the owner
+ * has to see it in their inbox.
+ *
+ * It travels only over the private channel between a worker and its own parent
+ * process. The manager strips the contents before relaying anything to the
+ * shared event queue — a customer's conversation has no business sitting in
+ * Redis where every part of the system can read it (docs/Rules.md §4).
  */
 export type InboundMessageEvent = {
   type: "inbound";
   connectionId: string;
   at: string;
+  /** The customer's number, digits only. */
+  from?: string;
+  /** What they said — or a short description, if it wasn't text. */
+  text?: string;
+  /** False when it wasn't text and so isn't something an agent can read. */
+  answerable?: boolean;
+  /** Whatever name their phone reports. */
+  contactName?: string | null;
+  /** WhatsApp's own id for the message, so a repeat isn't answered twice. */
+  externalId?: string | null;
 };
 
 export type SentMessageEvent = {

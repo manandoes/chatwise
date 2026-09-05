@@ -26,6 +26,11 @@ import { Queue, Worker } from "bullmq";
 
 import { db } from "../../lib/db.ts";
 import { createWorkerConnection } from "../../lib/redis.ts";
+import { routeInboundMessage } from "../../message-router/router.ts";
+import {
+  startCampaignSender,
+  stopCampaignSender,
+} from "../../jobs/campaign-sender.ts";
 import {
   COMMAND_QUEUE,
   EVENT_QUEUE,
@@ -125,16 +130,44 @@ async function handleWorkerEvent(event: SessionEvent) {
     }
 
     case "inbound": {
-      // Count it, don't store it. The inbox is Phase 9.
-      await db.whatsAppConnection
-        .update({
-          where: { id: event.connectionId },
-          data: {
-            messagesReceived: { increment: 1 },
-            lastMessageAt: new Date(event.at),
-          },
-        })
-        .catch(() => {});
+      // The free tier's half of Phase 7. The paid tier reaches the same router
+      // from its webhook; this is the same message taking a different road.
+      //
+      // It runs here, in the always-on manager, rather than in the web app,
+      // because this process is the only one that can actually talk to the
+      // customer's session — the app is serverless and has no way to reach a
+      // browser running on this machine.
+      if (!event.from || !event.text) break;
+
+      await routeInboundMessage(
+        {
+          connectionId: event.connectionId,
+          from: event.from,
+          text: event.text,
+          answerable: event.answerable,
+          contactName: event.contactName ?? null,
+          externalId: event.externalId ?? null,
+          at: new Date(event.at),
+        },
+        async (reply) => {
+          try {
+            sendMessage(event.connectionId, reply.to, reply.body);
+
+            // Handed to the session process. Whether WhatsApp accepted it comes
+            // back separately, as a "sent" event — claiming delivery here would
+            // be the stale status docs/Rules.md §4 forbids.
+            return { ok: true };
+          } catch (error) {
+            console.error(
+              `[manager] could not hand a reply to ${event.connectionId}`,
+              error,
+            );
+
+            return { ok: false, message: "The reply could not be sent." };
+          }
+        },
+      );
+
       break;
     }
 
@@ -153,7 +186,17 @@ async function handleWorkerEvent(event: SessionEvent) {
   }
 
   // Pass it on, so later phases can react to messages without changing this.
-  await eventQueue.add(event.type, event, {
+  //
+  // What the customer said does NOT go on the shared queue. It has already been
+  // dealt with above, and Redis is infrastructure every part of the system can
+  // read — the contents belong in the owner's inbox and nowhere else
+  // (docs/Rules.md §4).
+  const relayed: SessionEvent =
+    event.type === "inbound"
+      ? { type: "inbound", connectionId: event.connectionId, at: event.at }
+      : event;
+
+  await eventQueue.add(relayed.type, relayed, {
     removeOnComplete: 100,
     removeOnFail: 500,
   });
@@ -273,6 +316,13 @@ console.log(
   `[manager] listening for WhatsApp commands. Sessions run as separate processes; ${running.size} active.`,
 );
 
+// Bulk sends are spaced over many minutes (docs/Rules.md §8), so they cannot
+// run inside a web request. They run here, on the one host that is always up.
+// Note this is not specific to the free tier: a paid-tier campaign needs a
+// long-lived process just as much, it simply talks to Meta instead of to a
+// browser session.
+startCampaignSender();
+
 // ─── Shutting down tidily ───────────────────────────────────────────────────
 
 async function shutdown() {
@@ -285,6 +335,8 @@ async function shutdown() {
       message: "The service restarted. Reconnecting shortly.",
     });
   }
+
+  stopCampaignSender();
 
   await commandWorker.close();
   await eventQueue.close();

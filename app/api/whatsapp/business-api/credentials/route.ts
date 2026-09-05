@@ -1,16 +1,23 @@
 // Saving and removing a customer's WhatsApp Business API credentials.
 //
+// Every customer brings their own Meta app, so we need their app secret as well
+// as their access token: the secret is what Meta signs their webhooks with, and
+// without it no inbound message from them could ever be verified.
+//
 // The credentials are checked against Meta before they are stored, so a typo is
-// caught here rather than discovered when a real customer message goes
-// unanswered. The token is encrypted at rest and is never sent back to the
-// browser in any form (docs/Rules.md §3).
+// caught here rather than discovered when a real customer's message goes
+// unanswered. Both secrets are encrypted at rest and neither is ever sent back
+// to the browser in any form (docs/Rules.md §3).
 
 import { apiError, unexpectedError } from "@/lib/api-response";
 import { db } from "@/lib/db";
 import { isEncryptionConfigured } from "@/lib/encryption";
+import { takeFromBudget } from "@/lib/rate-limit";
+import { checkApiConnectionAllowed } from "@/lib/usage";
 import { requireApiConnection } from "@/lib/whatsapp-connection";
 import {
   deleteCredentials,
+  readCredentialSecrets,
   saveCredentials,
   verifyCredentials,
 } from "@/whatsapp-connectors/business-api/credentials";
@@ -23,6 +30,23 @@ export async function POST(request: Request) {
   try {
     const found = await requireApiConnection();
     if (!found.ok) return found.response;
+
+    // Every attempt here ends in a call to Meta on the customer's behalf
+    // (lib/rate-limit.ts).
+    const budget = await takeFromBudget("verifyCredentials", found.businessId);
+
+    if (!budget.allowed) {
+      return apiError(budget.message, "RATE_LIMITED", 429);
+    }
+
+    // The official WhatsApp Business API is part of the Growth plan
+    // (lib/plans.ts). Checked here rather than in the browser, because this is
+    // the point where the connection actually starts working.
+    const allowed = await checkApiConnectionAllowed(found.businessId);
+
+    if (!allowed.ok) {
+      return apiError(allowed.message, "NOT_AUTHORIZED", 403);
+    }
 
     if (!isEncryptionConfigured()) {
       // Refuse rather than store a token we cannot encrypt.
@@ -41,10 +65,31 @@ export async function POST(request: Request) {
     > | null;
 
     const phoneNumberId = String(body?.phoneNumberId ?? "").trim();
+    const appId = String(body?.appId ?? "").trim();
     const businessAccountId = String(body?.businessAccountId ?? "").trim();
-    const accessToken = String(body?.accessToken ?? "").trim();
+
+    // Someone updating their details can leave either secret blank to mean
+    // "keep the one you already have" — they were never shown it to retype.
+    const existing = await readCredentialSecrets(found.connection.id);
+    const accessToken =
+      String(body?.accessToken ?? "").trim() || existing?.accessToken || "";
+    const appSecret =
+      String(body?.appSecret ?? "").trim() || existing?.appSecret || "";
 
     const fields: Record<string, string> = {};
+
+    if (appId && (!/^\d+$/.test(appId) || appId.length > MAX_ID_LENGTH)) {
+      fields.appId = "This should be a long number, or left blank.";
+    }
+
+    // Required, not optional: without it every inbound message would be
+    // unverifiable, and an unverifiable message is refused rather than trusted.
+    if (!appSecret) {
+      fields.appSecret =
+        "Needed so we can check that incoming messages really came from Meta.";
+    } else if (!/^[a-f0-9]{16,128}$/i.test(appSecret)) {
+      fields.appSecret = "That doesn't look like an app secret.";
+    }
 
     if (!/^\d+$/.test(phoneNumberId) || phoneNumberId.length > MAX_ID_LENGTH) {
       fields.phoneNumberId = "This should be the long number from your Meta app.";
@@ -89,8 +134,10 @@ export async function POST(request: Request) {
     const saved = await saveCredentials({
       connectionId: found.connection.id,
       phoneNumberId,
+      appId: appId || null,
       businessAccountId: businessAccountId || null,
       accessToken,
+      appSecret,
       displayPhoneNumber: check.data.displayPhoneNumber,
     });
 
@@ -112,6 +159,10 @@ export async function POST(request: Request) {
       connected: true,
       displayPhoneNumber: check.data.displayPhoneNumber,
       verifiedName: check.data.verifiedName,
+      // The customer needs both of these to finish setting up the webhook in
+      // their own Meta app. Neither is a secret we hold on their behalf — the
+      // verify token is one we generated *for* them to paste in.
+      webhook: saved.webhook,
     });
   } catch (error) {
     return unexpectedError("whatsapp/business-api/credentials", error);

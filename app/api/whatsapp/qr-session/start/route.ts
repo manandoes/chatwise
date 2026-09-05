@@ -2,6 +2,7 @@
 // produces a QR code to scan.
 
 import { apiError, unexpectedError } from "@/lib/api-response";
+import { takeFromBudget } from "@/lib/rate-limit";
 import { QueueUnavailableError, requestSessionStart } from "@/whatsapp-connectors/web-qr/session-commands";
 import { requireQrConnection } from "@/lib/whatsapp-connection";
 
@@ -10,6 +11,13 @@ export async function POST() {
     const found = await requireQrConnection();
     if (!found.ok) return found.response;
 
+    // Each start spawns a real browser on the worker host, so this one is about
+    // that host staying up rather than about abuse (lib/rate-limit.ts).
+    const budget = await takeFromBudget("startSession", found.businessId);
+
+    if (!budget.allowed) {
+      return apiError(budget.message, "RATE_LIMITED", 429);
+    }
 
     await requestSessionStart(found.connection.id, found.businessId);
 

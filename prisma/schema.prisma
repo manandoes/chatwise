@@ -102,19 +102,26 @@ model Business {
 
   /// Null until setup Step C, because the row is created when someone starts
   /// the wizard — before we've asked them anything.
-  name      String?
-  industry  String?
+  name                  String?
+  industry              String?
   /// Free-text description of what the business sells or does.
-  about     String?
-  timezone  String   @default("UTC")
+  about                 String?
+  timezone              String    @default("UTC")
   /// Set when the wizard is finished. Null means setup is still in progress,
   /// which is what sends someone back into it.
   onboardingCompletedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
-  agent      AgentInstance?
-  connection WhatsAppConnection?
+  agent            AgentInstance?
+  connection       WhatsAppConnection?
+  conversations    Conversation[]
+  knowledgeEntries KnowledgeEntry[]
+  leads            Lead[]
+  templates        MessageTemplate[]
+  campaigns        Campaign[]
+  optOuts          OptOut[]
+  subscription     Subscription?
 
   @@map("businesses")
 }
@@ -162,7 +169,7 @@ enum ConnectionStatus {
 
 /// The single agent this business runs.
 model AgentInstance {
-  id String @id @default(cuid())
+  id         String   @id @default(cuid())
   /// UNIQUE — one agent per business, enforced by the database.
   businessId String   @unique
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -194,7 +201,7 @@ model AgentInstance {
 /// The single WhatsApp connection this business uses. Either QR or API, never
 /// both — one row, and `type` holds the choice.
 model WhatsAppConnection {
-  id String @id @default(cuid())
+  id         String   @id @default(cuid())
   /// UNIQUE — one connection per business, enforced by the database.
   businessId String   @unique
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -236,7 +243,7 @@ model WhatsAppConnection {
 /// itself never reads it; only the worker that owns that customer's session
 /// does.
 model WhatsAppSession {
-  id String @id @default(cuid())
+  id           String             @id @default(cuid())
   /// UNIQUE — one saved session per connection.
   connectionId String             @unique
   connection   WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
@@ -252,25 +259,31 @@ model WhatsAppSession {
 
 /// The Meta credentials for a paid-tier connection.
 ///
-/// The access token is a permanent key to send messages as that business, so
-/// like the QR session it is encrypted and never leaves the server
-/// (docs/Rules.md §3). Nothing here is ever sent to the browser — not even
-/// masked; the screen only says whether credentials are saved.
+/// Every customer brings their **own** Meta app, so everything here belongs to
+/// that one customer — including the app secret. Nothing about Meta is
+/// configured platform-wide.
+///
+/// The access token and app secret are both keys to that business's WhatsApp,
+/// so both are encrypted and never leave the server (docs/Rules.md §3). Neither
+/// is ever sent to the browser, not even masked; the screen is told only
+/// *whether* credentials are saved.
 model WhatsAppApiCredential {
-  id String @id @default(cuid())
+  id           String             @id @default(cuid())
   /// UNIQUE — one set of credentials per connection.
   connectionId String             @unique
   connection   WhatsAppConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 
   /// Meta's id for the business phone number.
   ///
-  /// UNIQUE across every account, because inbound webhooks all arrive at one
-  /// endpoint and this is what says which customer a message belongs to. Two
-  /// accounts claiming the same number would make that routing ambiguous.
+  /// UNIQUE across every account: it is what says whose message an inbound
+  /// webhook is. Two accounts claiming the same number would make that
+  /// ambiguous.
   phoneNumberId String @unique
 
-  /// The WhatsApp Business Account the number belongs to. Optional — useful for
-  /// support, not needed to send.
+  /// The customer's Meta app id. Not secret — useful for support.
+  appId String?
+
+  /// The WhatsApp Business Account the number belongs to. Optional.
   businessAccountId String?
 
   /// The human-readable number, for showing on the dashboard. Not a secret.
@@ -279,11 +292,597 @@ model WhatsAppApiCredential {
   /// AES-256-GCM ciphertext of the access token (see lib/encryption.ts).
   accessToken Bytes
 
+  /// AES-256-GCM ciphertext of that customer's Meta app secret.
+  ///
+  /// Meta signs every webhook with this, and each customer's app has its own.
+  /// Without it, no inbound message from this customer can be verified — and an
+  /// unverifiable message is refused, never trusted.
+  appSecret Bytes
+
+  /// The random segment in this customer's own webhook address.
+  ///
+  /// Each customer gets a distinct URL, which is what lets us know whose
+  /// payload we are looking at *before* verifying it. That matters because
+  /// Meta's initial verification call carries no phone number — only a token
+  /// and a challenge — so the path is the only thing identifying the account.
+  webhookPathToken String @unique
+
+  /// The token the customer pastes into Meta's "Verify token" box. We generate
+  /// it so it is strong and so there is one less thing for them to invent.
+  webhookVerifyToken String
+
   /// Set when we last successfully called Meta with these credentials.
-  verifiedAt DateTime?
+  verifiedAt        DateTime?
+  /// Set the first time Meta completed the webhook handshake against this URL.
+  webhookVerifiedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("whatsapp_api_credentials")
+}
+
+// ─── Phase 7: conversations, messages and the knowledge base ────────────────
+// Up to this point nothing stored what a message actually said — deliberately,
+// because there was nowhere for it to go and no reason to keep somebody's
+// private conversation (docs/Rules.md §4). Phase 7 changes that: a bot cannot
+// answer a question it is not allowed to read, and the customer is promised an
+// inbox they can look at (docs/PRD.md §6). So message text is stored from here
+// on, and the rule becomes "keep it where the business that owns it can see it,
+// and nowhere else" — not the server logs, not the queue payloads that pass
+// through our own infrastructure.
+
+/// Who stopped the agent replying in a thread (Phase 9).
+///
+/// Worth telling apart even though the effect is identical, because the two
+/// mean opposite things to the person reading the inbox: one is the agent
+/// asking for help, the other is that person having already stepped in.
+enum HandoverSource {
+  /// The agent handed the thread over — it could not answer, or the owner's
+  /// escalation rules said to fetch somebody.
+  AGENT
+  /// Somebody at the business took the thread over from the inbox, either by
+  /// pressing Take over or simply by typing a reply themselves.
+  HUMAN
+}
+
+/// One WhatsApp thread, between a business and one of its customers.
+///
+/// Keyed on the contact's phone number, which is the only identity WhatsApp
+/// gives us. One row per contact per business — so a customer who messages
+/// again in a month lands back in the same thread rather than starting a new
+/// one.
+model Conversation {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  /// The customer's number, digits only, in international format.
+  contactPhone String
+  /// Whatever name WhatsApp gives us for them, if any. Not to be trusted as
+  /// identity — it is whatever they set on their own phone.
+  contactName  String?
+
+  /// When anything last happened, so the inbox can sort by it without counting
+  /// messages.
+  lastMessageAt DateTime @default(now())
+
+  /// Set while the agent is not replying in this thread — either because it
+  /// handed over itself (docs/Rules.md §5 — every agent needs a way out) or
+  /// because somebody at the business took the thread over from the inbox
+  /// (Phase 9). Cleared when they let the agent carry on.
+  ///
+  /// The router treats this one field as "stay quiet", whichever of the two put
+  /// it there, so there is only ever one thing to check before replying.
+  escalatedAt      DateTime?
+  /// Which of the two it was. Null whenever `escalatedAt` is null.
+  escalatedBy      HandoverSource?
+  /// Why it stopped, in words the business owner can act on.
+  escalationReason String?
+
+  /// How many of this contact's messages have arrived since somebody at the
+  /// business last opened the thread.
+  ///
+  /// A stored count rather than a "messages after your last visit" query,
+  /// because the inbox lists a hundred threads at a time and that query would
+  /// be a hundred more (docs/Rules.md §4 — the dashboard has to stay quick to
+  /// be worth watching).
+  unreadCount Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages         Message[]
+  /// The CRM record the background agent keeps up to date (Phase 8).
+  lead             Lead?
+  /// Any bulk messages sent to this contact (Phase 12).
+  campaignMessages CampaignRecipient[]
+
+  /// One thread per contact, enforced by the database rather than by whichever
+  /// code path happens to create it.
+  @@unique([businessId, contactPhone])
+  @@index([businessId, lastMessageAt])
+  @@map("conversations")
+}
+
+enum MessageDirection {
+  /// From the customer to the business.
+  INBOUND
+  /// From the business to the customer.
+  OUTBOUND
+}
+
+/// Who wrote a message.
+enum MessageAuthor {
+  /// The end customer messaging the business.
+  CONTACT
+  /// One of the agents in /bots.
+  AGENT
+  /// A person at the business, typing in the inbox (Phase 9).
+  HUMAN
+  /// Something ChatWise itself said, e.g. an apology when the agent failed.
+  SYSTEM
+  /// One of a bulk send's messages (Phase 12). Kept apart from HUMAN because a
+  /// broadcast is not somebody answering a customer, and counting it as one
+  /// would flatter both the reply figures and the answer times.
+  CAMPAIGN
+}
+
+/// A single WhatsApp message in a thread.
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  direction MessageDirection
+  author    MessageAuthor
+
+  /// What was actually said. Visible to the business that owns the thread and
+  /// to nobody else — never written to a log (docs/Rules.md §4).
+  body String @db.Text
+
+  /// Which agent produced this reply, for the per-agent breakdown in Analytics.
+  /// Null for anything a person or a customer wrote.
+  botType BotType?
+
+  /// The id WhatsApp or Meta gave this message.
+  ///
+  /// UNIQUE because Meta re-sends a webhook it thinks we missed, and a retry
+  /// must not turn into a second copy of the same message — or a second reply
+  /// to the customer. A repeat insert fails and the retry is dropped.
+  externalId String? @unique
+
+  /// Set when sending failed, in words a person can act on.
+  failureReason String?
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+/// One question-and-answer pair the agent may answer from.
+///
+/// This is the whole of the Phase 7 knowledge base: plain question/answer text
+/// a non-technical owner types in (docs/PRD.md §6). Catalogues and uploads come
+/// later. An agent answers from these and from the setup answers, and from
+/// nothing else — if it isn't here, it says so rather than inventing one
+/// (docs/Rules.md §5).
+model KnowledgeEntry {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  question String @db.Text
+  answer   String @db.Text
+
+  /// The order the owner arranged them in.
+  position Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId, position])
+  @@map("knowledge_entries")
+}
+
+// ─── Phase 8: the CRM record ────────────────────────────────────────────────
+// The always-on CRM agent runs alongside whichever agent an account chose and
+// keeps one record per customer up to date (docs/PRD.md §5, row 10). It needs
+// somewhere to write, so the table arrives with it. The screen for managing
+// these by hand is Phase 10 — this is the data underneath it.
+
+/// Where a contact has got to with the business.
+enum LeadStatus {
+  /// Has messaged, nothing established yet.
+  NEW
+  /// Asked about something specific — a price, a product, a booking.
+  INTERESTED
+  /// Fits what the business said a good enquiry looks like.
+  QUALIFIED
+  /// Doesn't fit, or said no.
+  NOT_A_FIT
+  /// Has bought.
+  CUSTOMER
+}
+
+/// One contact, as the business's CRM sees them.
+///
+/// Exactly one row per conversation: the phone number is the only identity
+/// WhatsApp gives us, and a thread already means "this business and this
+/// contact".
+///
+/// **Whose writes win.** The CRM agent may fill a field in and may correct its
+/// own earlier guess, but anything a person edited in the dashboard is listed
+/// in `fieldsEditedByHuman` and the agent leaves it alone from then on
+/// (docs/Rules.md §5). `letTheAgentUpdateThis` is the explicit opt-out of that
+/// protection, per-lead, for an owner who would rather the agent kept a field
+/// current.
+model Lead {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  /// UNIQUE — one lead per thread.
+  conversationId String       @unique
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  /// Copied from the conversation so the leads table can be read on its own.
+  contactPhone String
+  name         String?
+  email        String?
+
+  status LeadStatus @default(NEW)
+
+  /// 0–100, how promising this enquiry looks against what the owner said a good
+  /// one is. Null until there is enough in the thread to judge.
+  score Int?
+
+  /// Short labels the agent noticed, e.g. "budget-conscious", "wants delivery".
+  tags String[] @default([])
+
+  /// A sentence or two: what this person wants, in plain English.
+  summary  String? @db.Text
+  /// What the business should do next, if the agent could tell.
+  nextStep String? @db.Text
+
+  /// Typed by a person in the dashboard. The agent never writes here.
+  notes String? @db.Text
+
+  /// The fields a person has edited by hand. The CRM agent skips every field
+  /// named here (docs/Rules.md §5).
+  fieldsEditedByHuman   String[] @default([])
+  /// Set by the owner to waive that protection for this lead.
+  letTheAgentUpdateThis Boolean  @default(false)
+
+  /// When the CRM agent last had something to change.
+  lastAgentUpdateAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId, updatedAt])
+  @@index([businessId, status])
+  @@map("leads")
+}
+
+// ─── Phase 12: bulk outreach ────────────────────────────────────────────────
+// The riskiest feature in the product. Sent carelessly, a bulk send gets a
+// customer's own WhatsApp number banned (docs/PRD.md §7, docs/Rules.md §8), so
+// several of the columns below exist purely to make a safety rule enforceable
+// rather than merely advisable:
+//
+//   * `CampaignRecipient.sendAfter` is the throttle. The spacing is written
+//     down per recipient when the campaign is scheduled, so it survives a
+//     restart and cannot be "sped up" by a retry loop.
+//   * `CampaignRecipient.status` is claimed atomically before a send, which is
+//     what stops the same person being messaged twice.
+//   * `Campaign.warningAcknowledgedAt` records that the free tier's mandatory
+//     ban-risk warning was actually accepted (docs/PRD.md §7.2).
+//   * `OptOut` is checked when a campaign is built *and* again as each message
+//     goes out, because the two can be days apart.
+
+/// Where a campaign has got to.
+enum CampaignStatus {
+  /// Being written. Nothing has been scheduled or sent.
+  DRAFT
+  /// Accepted, and every recipient has a time to go out at.
+  SCHEDULED
+  /// Some have gone, some haven't.
+  SENDING
+  /// Every recipient has been dealt with, one way or another.
+  SENT
+  /// Stopped by the owner. Anything not yet sent never will be.
+  CANCELLED
+}
+
+/// Where one person's copy of a bulk message has got to.
+///
+/// Not the same thing as the direction and author on a Message row: this
+/// tracks delivery, which only the paid tier can actually report on
+/// (`supportsDeliveryReceipts` in whatsapp-connectors/capabilities.ts).
+enum DeliveryStatus {
+  /// Waiting for its turn in the throttle.
+  PENDING
+  /// Claimed by the sender. A row does not sit here long; if it does, a send
+  /// was interrupted.
+  SENDING
+  /// Handed to WhatsApp. On the free tier this is as much as is ever known.
+  SENT
+  /// Meta says it reached the handset.
+  DELIVERED
+  /// Meta says it was opened.
+  READ
+  /// They wrote back — the strongest signal a campaign gets.
+  REPLIED
+  /// It will not be sent. `failureReason` says why, in words the owner can act on.
+  FAILED
+  /// Deliberately not sent: they opted out between scheduling and their turn.
+  SKIPPED
+}
+
+/// Whether Meta has approved a template for use on the paid tier.
+///
+/// ChatWise cannot see inside a customer's Meta account, so this records what
+/// the customer told us. It is a pre-flight check that gives a clear error
+/// early; Meta enforces the real rule at send time regardless.
+enum TemplateApproval {
+  NOT_SUBMITTED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// A message a business saves to reuse.
+///
+/// The two tiers mean genuinely different things by "template". On the free
+/// tier it is ordinary text we fill in and send. On the paid tier the words
+/// live at Meta under a name they approved, and `metaName`/`metaLanguage` are
+/// how we ask for them — `body` is then our copy of what it says, kept so the
+/// screen can show a preview and so the opt-out line can be checked.
+model MessageTemplate {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  /// What the owner calls it.
+  name     String
+  /// The words, with {name}-style placeholders.
+  body     String  @db.Text
+  /// Which of the starter groups it came from, if any (docs/PRD.md §7.3).
+  category String?
+
+  /// Paid tier only: the template's name and language as registered at Meta.
+  metaName     String?
+  metaLanguage String?
+  approval     TemplateApproval @default(NOT_SUBMITTED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  campaigns Campaign[]
+
+  @@index([businessId, updatedAt])
+  @@map("message_templates")
+}
+
+/// One bulk send.
+model Campaign {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  name String
+
+  /// The words as they stood when this was sent — a snapshot, not a reference.
+  /// Editing a template afterwards must never change what an already-sent
+  /// campaign says it said.
+  body String @db.Text
+
+  /// Which template it started from, if any. Kept for the owner's benefit; the
+  /// send itself never reads it.
+  templateId String?
+  template   MessageTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  /// Paid-tier sends go out as an approved template, by name (docs/PRD.md §7.1).
+  /// Null on the free tier, where the text above is sent as it stands.
+  metaTemplateName     String?
+  metaTemplateLanguage String?
+
+  /// Which connection this went out on, recorded because the rules differ
+  /// sharply by tier and a campaign has to be readable back years later.
+  tier   ConnectionType
+  status CampaignStatus @default(DRAFT)
+
+  /// The gap between messages, in milliseconds. Zero on the paid tier.
+  throttleMs Int @default(0)
+
+  /// When the free tier's mandatory ban-risk warning was accepted. Null on a
+  /// free-tier campaign means it must not send (docs/PRD.md §7.2).
+  warningAcknowledgedAt DateTime?
+
+  scheduledFor DateTime?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  recipients CampaignRecipient[]
+
+  @@index([businessId, createdAt])
+  @@index([status])
+  @@map("campaigns")
+}
+
+/// One person's copy of a bulk message, and what became of it.
+///
+/// This is also the campaign's contact list: recipients are chosen from the
+/// conversations a business already has, which is the only place ChatWise gets
+/// a contact from. There is deliberately no separate saved-list table — see
+/// docs/Architecture.md §4.
+model CampaignRecipient {
+  id         String   @id @default(cuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  /// The thread this goes into, so a bulk message appears in the inbox
+  /// alongside everything else said to this person.
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  contactPhone String
+  contactName  String?
+
+  /// This person's copy, with the placeholders already filled in. Written when
+  /// the campaign is scheduled, so what they were sent is never in doubt.
+  body String @db.Text
+
+  status DeliveryStatus @default(PENDING)
+
+  /// The earliest this one may go out. The throttle, written down.
+  sendAfter DateTime
+
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+  repliedAt   DateTime?
+
+  /// Why it will not be sent, in words the owner can act on.
+  failureReason String?
+
+  /// Meta's id for the sent message, which is what a delivery receipt names.
+  /// Null on the free tier, which reports nothing back.
+  externalId String? @unique
+
+  createdAt DateTime @default(now())
+
+  /// Nobody is messaged twice by the same campaign, enforced by the database
+  /// rather than by whichever code path happens to build the list.
+  @@unique([campaignId, contactPhone])
+  /// The sender's own question: whose turn is it now?
+  @@index([status, sendAfter])
+  @@index([conversationId])
+  @@map("campaign_recipients")
+}
+
+/// Somebody who asked not to be messaged again.
+///
+/// Checked before every send, on every tier, with no way to override it from
+/// the screens (docs/Rules.md §8). Keyed on the phone number rather than on a
+/// conversation, so it still applies if that thread is ever deleted.
+model OptOut {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  contactPhone String
+
+  /// What they actually wrote, so an owner asking "why is this person
+  /// excluded?" gets an answer.
+  reason String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([businessId, contactPhone])
+  @@index([businessId, createdAt])
+  @@map("opt_outs")
+}
+
+// ─── Billing (Phase 13) ─────────────────────────────────────────────────────
+// What a business is paying for, and whether the payment is currently good.
+//
+// The amounts are deliberately not here. Prices live in Razorpay and the plan
+// list lives in lib/plans.ts; this table records only which plan an account is
+// on and what state its payment is in, because those are facts about *this*
+// account rather than pricing decisions.
+
+/// The four plans (see lib/plans.ts for what each one includes).
+///
+/// There is no "number of agents" here on purpose: an account runs one agent on
+/// one connection, so that is never a plan question (docs/PRD.md §4). Plans
+/// differ by volume, by which WhatsApp connection they allow, and by how much
+/// history the dashboard will show.
+enum PlanId {
+  FREE
+  STARTER
+  GROWTH
+  PRO
+}
+
+/// Where a subscription stands, in our own words rather than Razorpay's.
+///
+/// Razorpay has more states than this (created, authenticated, active, pending,
+/// halted, cancelled, completed, expired) and can add more, so
+/// lib/subscription.ts translates theirs into these and treats anything it does
+/// not recognise as "not paid up" — the cautious direction to be wrong in.
+enum SubscriptionStatus {
+  /// Never subscribed. Everyone starts here, and the free plan needs nothing else.
+  NONE
+  /// Started but the first payment hasn't gone through yet.
+  INCOMPLETE
+  ACTIVE
+  /// A payment failed. Still theirs, but it needs attention.
+  PAST_DUE
+  CANCELED
+}
+
+/// One row per business, created the first time billing is touched.
+model Subscription {
+  id         String   @id @default(cuid())
+  /// Unique: an account has exactly one subscription, like it has one agent.
+  businessId String   @unique
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  plan   PlanId             @default(FREE)
+  status SubscriptionStatus @default(NONE)
+
+  /// Razorpay's own ids. Not secrets — they are useless without the API key —
+  /// but they are never sent to the browser either, because nothing there needs
+  /// them (docs/Rules.md §3).
+  ///
+  /// UNIQUE on both: two businesses sharing one Razorpay subscription would
+  /// mean one account's payment silently entitling another's.
+  razorpayCustomerId     String? @unique
+  razorpaySubscriptionId String? @unique
+
+  /// The paid period Razorpay is currently charging for. Usage is counted
+  /// against this when it is set, and against the calendar month when it isn't.
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+
+  /// True once somebody has cancelled but the paid period hasn't run out yet.
+  /// They keep everything until `currentPeriodEnd`.
+  cancelAtPeriodEnd Boolean @default(false)
+
+  /// Set when a downgrade is waiting for the current period to end, so the
+  /// billing screen can say "you move to Starter on the 4th" rather than
+  /// pretending nothing is happening.
+  pendingPlan PlanId?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("subscriptions")
+}
+
+/// Every payment-provider event we have already dealt with.
+///
+/// Razorpay re-sends an event until it gets a 200, and can send the same one
+/// twice regardless. The id is Razorpay's own, and it is the primary key — so a
+/// repeat insert fails and the repeat is dropped, exactly the way a re-sent
+/// WhatsApp message is dropped by `messages.externalId`.
+model BillingEvent {
+  /// Razorpay's event id, from the `x-razorpay-event-id` header.
+  id   String @id
+  type String
+
+  /// Which account it changed, when we could work that out. Handy when
+  /// somebody asks why their plan changed at 3am.
+  businessId String?
+
+  receivedAt DateTime @default(now())
+
+  @@index([businessId, receivedAt])
+  @@map("billing_events")
 }

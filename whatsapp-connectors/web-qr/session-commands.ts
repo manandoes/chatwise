@@ -13,13 +13,13 @@ import {
   getRedis,
   isQueueConfigured,
   isQueueReachable,
-} from "@/lib/redis";
+} from "../../lib/redis.ts";
 import {
   COMMAND_QUEUE,
   liveStateKey,
   type LiveSessionState,
   type SessionCommand,
-} from "@/whatsapp-connectors/web-qr/protocol";
+} from "./protocol.ts";
 
 import "server-only";
 

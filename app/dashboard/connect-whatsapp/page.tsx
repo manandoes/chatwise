@@ -1,17 +1,19 @@
 // Connect WhatsApp.
 //
-// Free tier only for now — the official Business API form is Phase 6. An
-// account is one or the other, never both (docs/PRD.md §3.1), so this screen
-// shows whichever applies rather than offering a choice.
+// An account is either free-tier (scan a QR code) or paid-tier (the official
+// Business API), never both (docs/PRD.md §3.1) — so this screen shows whichever
+// applies rather than offering a choice.
 
+import { headers } from "next/headers";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
-import { ComingSoon } from "@/components/dashboard/coming-soon";
+import { ApiConnect } from "@/components/dashboard/api-connect";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { QrConnect } from "@/components/dashboard/qr-connect";
 import { requireUser } from "@/lib/auth";
 import { getOnboardingState } from "@/lib/onboarding";
+import { describeCredentials } from "@/whatsapp-connectors/business-api/credentials";
 import { renderQrCode } from "@/whatsapp-connectors/web-qr/qr-generator";
 import {
   isQueueReachable,
@@ -20,26 +22,61 @@ import {
 
 export const metadata: Metadata = { title: "Connect WhatsApp" };
 
+/**
+ * Where this app is reachable, used to build each customer's own webhook
+ * address.
+ *
+ * Taken from the request rather than hardcoded, so it is right in development,
+ * on a preview deploy and in production without anyone having to remember to
+ * change a setting.
+ */
+async function appOrigin(): Promise<string> {
+  const incoming = await headers();
+  const host = incoming.get("x-forwarded-host") ?? incoming.get("host");
+  const protocol = incoming.get("x-forwarded-proto") ?? "https";
+
+  const base = process.env.AUTH_URL ?? (host ? `${protocol}://${host}` : "");
+
+  return base.replace(/\/$/, "");
+}
+
 export default async function ConnectWhatsAppPage() {
   const user = await requireUser();
   const { connection } = await getOnboardingState(user.id);
 
   if (!connection) notFound();
 
-  // Accounts on the official API don't scan anything — that form is Phase 6.
   if (connection.type === "API") {
+    const saved = await describeCredentials(connection.id);
+
     return (
-      <ComingSoon
-        title="Connect WhatsApp"
-        description="Your account uses the official WhatsApp Business API. The setup form for it is still being built."
-        icon="Smartphone"
-        phase="Phase 6"
-        willDo={[
-          "Enter your Meta app ID, phone number ID and access token",
-          "Follow a step-by-step guide through Meta's approval process",
-          "See whether your number is connected, in plain words",
-        ]}
-      />
+      <div className="space-y-8">
+        <PageHeader
+          title="Connect WhatsApp"
+          description="Connect your number through the official WhatsApp Business API. Until this is done, your agent can't answer anyone."
+        />
+
+        <ApiConnect
+          saved={
+            saved
+              ? {
+                  phoneNumberId: saved.phoneNumberId,
+                  appId: saved.appId,
+                  businessAccountId: saved.businessAccountId,
+                  displayPhoneNumber: saved.displayPhoneNumber,
+                  webhookPathToken: saved.webhookPathToken,
+                  webhookVerifyToken: saved.webhookVerifyToken,
+                  webhookVerifiedAt: saved.webhookVerifiedAt?.toISOString() ?? null,
+                }
+              : null
+          }
+          status={connection.status}
+          lastError={connection.lastError}
+          messagesReceived={connection.messagesReceived}
+          messagesSent={connection.messagesSent}
+          appOrigin={await appOrigin()}
+        />
+      </div>
     );
   }
 

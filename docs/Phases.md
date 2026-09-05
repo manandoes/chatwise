@@ -82,7 +82,7 @@ Each phase should be fully working and testable before moving to the next. Don't
 - **Done when:** a free-tier user can send a throttled ≤25-recipient campaign (after acknowledging the warning) and a paid-tier user can send an approved-template campaign, with opt-outs respected and results tracked
 
 ## Phase 13 — Billing & Subscriptions
-- Stripe integration: plan selection, checkout, webhook handling for subscription status
+- Razorpay integration: plan selection, hosted checkout, webhook handling for subscription status (the plan documents said Stripe; the owner chose Razorpay on 2026-09-05)
 - Usage tracking against plan limits (message volume; campaign limits if any)
 - Billing page: current plan, invoices, upgrade/downgrade
 - **Done when:** a user can subscribe, get gated correctly by plan limits, and manage their subscription
@@ -93,6 +93,18 @@ Each phase should be fully working and testable before moving to the next. Don't
 - Performance pass, mobile responsiveness check
 - Final design pass against Design.md
 - **Done when:** the app is ready to onboard real paying customers
+
+**Status (2026-09-05): the code is done; the accounts are not.** Rate limiting,
+security headers, a last-resort error screen, a dashboard loading state and a
+standing source audit (118 checks) are all in. What still stands between this
+and a real paying customer is not code: a `GEMINI_API_KEY`, a connected
+WhatsApp number, a Razorpay account with one plan per paid tier, and an email
+service so that "forgot password" can exist. See docs/Memory.md.
+
+The model provider is **Google Gemini** (`gemini-3.8-flash`), chosen by the
+product owner on 2026-09-05. It is reached over plain HTTPS from
+`lib/ai-client.ts`, which is the only file in the repo that knows who the
+provider is. See README.md for how to run and deploy the two processes.
 
 ---
 

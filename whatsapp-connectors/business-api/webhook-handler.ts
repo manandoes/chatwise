@@ -1,76 +1,65 @@
 // Receiving what Meta sends us.
 //
-// This is the one endpoint in ChatWise that the public internet can reach
-// without logging in, which makes it the one that has to be most careful.
-// Anyone can POST to it; only Meta can sign a request correctly. Every payload
-// is therefore checked against a signature before a single field is trusted.
+// This is the one part of ChatWise the public internet can reach without
+// logging in, which makes it the part that has to be most careful. Anyone can
+// POST to it; only someone holding the customer's Meta app secret can sign a
+// request correctly.
 //
-// Meta delivers every customer's messages to the *same* URL, so the payload
-// itself says which account a message belongs to — via the phone number id it
-// arrived on. That is why that id is unique across accounts (see
-// prisma/schema.prisma).
+// Because every customer brings their own Meta app, **each customer has their
+// own signing secret** — so before anything can be verified, we have to know
+// whose webhook this is. That is why each customer gets their own webhook
+// address, with a random segment in the path: the URL identifies the account,
+// and only then is the payload checked. Meta's first verification call carries
+// no phone number at all, so the path is the only thing that could identify the
+// account there.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import "server-only";
 
-import { db } from "@/lib/db";
-import { findConnectionByPhoneNumberId } from "@/whatsapp-connectors/business-api/credentials";
+import { recordDeliveryReceipt } from "@/campaigns/send-campaign";
+import { routeInboundMessage } from "@/message-router/router";
+import { sendTextMessage } from "@/whatsapp-connectors/business-api/send-message";
 
 /**
- * Answers Meta's one-off check that we own this endpoint.
+ * Answers Meta's one-off check that the customer owns this endpoint.
  *
- * Meta sends a token we chose in advance plus a challenge; echoing the
- * challenge back proves we know the token.
+ * Meta sends back the verify token the customer pasted into their app, plus a
+ * challenge; echoing the challenge proves we hold the same token.
  */
-export function verifyWebhookSubscription(params: URLSearchParams): {
-  ok: boolean;
-  challenge?: string;
-} {
-  const expected = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
-
-  if (!expected) {
-    console.error(
-      "[business-api] WHATSAPP_WEBHOOK_VERIFY_TOKEN is not set, so webhook verification cannot succeed",
-    );
-    return { ok: false };
-  }
-
+export function verifySubscription(
+  params: URLSearchParams,
+  expectedVerifyToken: string,
+): { ok: boolean; challenge?: string } {
   const mode = params.get("hub.mode");
   const token = params.get("hub.verify_token");
   const challenge = params.get("hub.challenge");
 
   if (mode !== "subscribe" || !token || !challenge) return { ok: false };
-
-  if (!constantTimeEquals(token, expected)) return { ok: false };
+  if (!constantTimeEquals(token, expectedVerifyToken)) return { ok: false };
 
   return { ok: true, challenge };
 }
 
 /**
- * Checks a payload really came from Meta.
+ * Checks a payload really came from Meta, using this customer's app secret.
  *
- * Meta signs the raw request body with the app secret. We recompute that
- * signature and compare — which means the *exact bytes* have to be hashed, not
- * a re-serialised version of the parsed JSON, because re-serialising can change
- * whitespace or key order and would break an otherwise valid signature.
+ * Meta signs the raw request body. We recompute that signature and compare —
+ * which means the *exact bytes* have to be hashed, not a re-serialised version
+ * of the parsed JSON, because re-serialising can change whitespace or key order
+ * and would break an otherwise valid signature.
  */
-export function isSignatureValid(rawBody: string, header: string | null): boolean {
-  const appSecret = process.env.META_APP_SECRET;
-
-  if (!appSecret) {
-    // Refusing everything is the right failure here. Accepting unsigned
-    // payloads because we can't check them would let anyone write to a
-    // customer's account (docs/Rules.md §3).
-    console.error(
-      "[business-api] META_APP_SECRET is not set, so no webhook can be verified",
-    );
-    return false;
-  }
-
+export function isSignatureValid(
+  rawBody: string,
+  header: string | null,
+  appSecret: string,
+): boolean {
+  if (!appSecret) return false;
   if (!header?.startsWith("sha256=")) return false;
 
-  const expected = createHmac("sha256", appSecret).update(rawBody, "utf8").digest("hex");
+  const expected = createHmac("sha256", appSecret)
+    .update(rawBody, "utf8")
+    .digest("hex");
 
   return constantTimeEquals(header.slice("sha256=".length), expected);
 }
@@ -85,9 +74,19 @@ function constantTimeEquals(a: string, b: string): boolean {
   return timingSafeEqual(left, right);
 }
 
-// ─── What a payload looks like ──────────────────────────────────────────────
+
+// ─── What a payload looks like ────────────────────────────────────
 // Only the parts we use. Everything is optional because it comes from outside
-// and must not be assumed.
+// and must not be assumed — a field Meta renames should make a message go
+// unanswered, not make the process fall over.
+
+type IncomingMessage = {
+  id?: string;
+  from?: string;
+  timestamp?: string;
+  type?: string;
+  text?: { body?: string };
+};
 
 type WebhookPayload = {
   object?: string;
@@ -96,7 +95,8 @@ type WebhookPayload = {
       field?: string;
       value?: {
         metadata?: { phone_number_id?: string };
-        messages?: { id?: string; from?: string; timestamp?: string }[];
+        contacts?: { wa_id?: string; profile?: { name?: string } }[];
+        messages?: IncomingMessage[];
         statuses?: { id?: string; status?: string }[];
       };
     }[];
@@ -104,30 +104,34 @@ type WebhookPayload = {
 };
 
 export type WebhookOutcome = {
-  /** How many inbound messages we recognised and attributed to an account. */
+  /** Inbound messages passed to the message router. */
   messagesHandled: number;
   /** Deliveries and reads Meta told us about. */
   statusesHandled: number;
-  /** Messages for a number no ChatWise account has connected. */
-  unknownNumbers: number;
+  /**
+   * Events whose phone number doesn't match the account this URL belongs to.
+   * Normal if a customer re-points an old webhook; also what a mismatched
+   * configuration looks like.
+   */
+  mismatchedNumbers: number;
 };
 
 /**
- * Processes a verified payload.
+ * Processes a payload that has already been verified as coming from Meta, for a
+ * known connection.
  *
- * Note what is deliberately *not* done here: the message text is never read or
- * stored. Handing a message to a bot is Phase 7 and the inbox is Phase 9; until
- * those exist there is no legitimate destination for the contents of somebody's
- * private conversation (docs/Rules.md §4). For now we record that a message
- * arrived, which is what keeps the connection-health indicator honest.
+ * Each message goes to the message router, which is the single place an inbound
+ * message is dealt with whichever tier it arrived on. Nothing here knows what an
+ * agent is, and nothing here writes a message's contents to a log.
  */
-export async function handleWebhookPayload(
+export async function handleVerifiedPayload(
   payload: unknown,
+  connection: { connectionId: string; phoneNumberId: string },
 ): Promise<WebhookOutcome> {
   const outcome: WebhookOutcome = {
     messagesHandled: 0,
     statusesHandled: 0,
-    unknownNumbers: 0,
+    mismatchedNumbers: 0,
   };
 
   const body = payload as WebhookPayload;
@@ -141,41 +145,136 @@ export async function handleWebhookPayload(
       const value = change.value;
       const phoneNumberId = value?.metadata?.phone_number_id;
 
-      if (!phoneNumberId) continue;
-
-      const connectionId = await findConnectionByPhoneNumberId(phoneNumberId);
-
-      if (!connectionId) {
-        // A number nobody here has connected. Normal if a customer disconnects
-        // without removing the webhook at Meta's end — worth counting, not
-        // worth erroring over.
-        outcome.unknownNumbers += 1;
+      // The signature proved this came from that customer's Meta app, so a
+      // payload for a different number is a misconfiguration rather than an
+      // attack — but it still isn't ours to act on.
+      if (!phoneNumberId || phoneNumberId !== connection.phoneNumberId) {
+        outcome.mismatchedNumbers += 1;
         continue;
       }
 
-      const messageCount = value?.messages?.length ?? 0;
-      const statusCount = value?.statuses?.length ?? 0;
+      // Meta tells us what became of the messages we sent. The only ones we
+      // have anything to record against are a campaign's (Phase 12) — an
+      // ordinary reply's receipt is counted and otherwise ignored, because
+      // nothing in the product asks when an agent's answer was read.
+      for (const status of value?.statuses ?? []) {
+        outcome.statusesHandled += 1;
 
-      if (messageCount > 0) {
-        await db.whatsAppConnection
-          .update({
-            where: { id: connectionId },
-            data: {
-              messagesReceived: { increment: messageCount },
-              lastMessageAt: new Date(),
-              // Traffic arriving is proof the connection works.
-              status: "CONNECTED",
-              lastError: null,
-            },
-          })
-          .catch(() => {});
+        if (!status?.id || !status.status) continue;
 
-        outcome.messagesHandled += messageCount;
+        await recordDeliveryReceipt(status.id, status.status).catch(
+          (error: unknown) => {
+            console.error("[webhook] could not record a delivery receipt", error);
+
+            return false;
+          },
+        );
       }
 
-      outcome.statusesHandled += statusCount;
+      for (const message of value?.messages ?? []) {
+        const handled = await handleOneMessage(message, {
+          connectionId: connection.connectionId,
+          names: namesFrom(value?.contacts),
+        });
+
+        if (handled) outcome.messagesHandled += 1;
+      }
     }
   }
 
   return outcome;
+}
+
+/** The display names Meta sent alongside the messages, by phone number. */
+function namesFrom(
+  contacts: { wa_id?: string; profile?: { name?: string } }[] | undefined,
+): Map<string, string> {
+  const names = new Map<string, string>();
+
+  for (const contact of contacts ?? []) {
+    if (contact.wa_id && contact.profile?.name) {
+      names.set(contact.wa_id, contact.profile.name);
+    }
+  }
+
+  return names;
+}
+
+/**
+ * Hands one message to the router, and sends whatever comes back.
+ *
+ * Anything that isn't text is passed on as a short description with
+ * `answerable: false` — the owner sees that something arrived without an agent
+ * being told the customer said words they didn't say.
+ */
+async function handleOneMessage(
+  message: IncomingMessage,
+  context: { connectionId: string; names: Map<string, string> },
+): Promise<boolean> {
+  const from = message.from;
+
+  if (!from) return false;
+
+  const isText = message.type === "text" && Boolean(message.text?.body?.trim());
+
+  const outcome = await routeInboundMessage(
+    {
+      connectionId: context.connectionId,
+      from,
+      text: isText ? (message.text?.body as string) : describe(message.type),
+      answerable: isText,
+      contactName: context.names.get(from) ?? null,
+      externalId: message.id ?? null,
+      at: timestampToDate(message.timestamp),
+    },
+    async (reply) => {
+      const sent = await sendTextMessage({
+        connectionId: context.connectionId,
+        to: reply.to,
+        body: reply.body,
+      });
+
+      return sent.ok ? { ok: true } : { ok: false, message: sent.message };
+    },
+  );
+
+  return outcome.status !== "ignored";
+}
+
+/**
+ * What to write in the thread when the message wasn't text.
+ *
+ * Meta's names for these, which are not the names whatsapp-web.js uses — see the
+ * matching list in web-qr/worker.ts.
+ */
+function describe(type: string | undefined): string {
+  switch (type) {
+    case "image":
+      return "Sent a photo.";
+    case "video":
+      return "Sent a video.";
+    case "audio":
+      return "Sent a voice message.";
+    case "document":
+      return "Sent a document.";
+    case "sticker":
+      return "Sent a sticker.";
+    case "location":
+      return "Shared a location.";
+    case "contacts":
+      return "Shared a contact.";
+    default:
+      return "Sent a message we couldn't read.";
+  }
+}
+
+/** Meta sends seconds since 1970, as a string. */
+function timestampToDate(timestamp: string | undefined): Date | undefined {
+  if (!timestamp) return undefined;
+
+  const seconds = Number(timestamp);
+
+  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+
+  return new Date(seconds * 1000);
 }

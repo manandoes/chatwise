@@ -49,3 +49,44 @@ next-env.d.ts
 .whatsapp-sessions*/
 .wwebjs_auth/
 .wwebjs_cache/
+
+# next.js / build caches
+.turbo/
+.swc/
+.eslintcache
+
+# local Redis snapshots (BullMQ dev queue)
+dump.rdb
+
+# logs
+*.log
+logs/
+
+# editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# os
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# vendored Prisma skill docs. Each agent tool installs its own byte-identical
+# copy; skills-lock.json is the manifest they are reinstalled from, so the
+# docs themselves do not belong in the repo.
+.agents/skills/
+.claude/skills/
+.windsurf/skills/
+
+# local agent/tool settings — machine-specific.
+.claude/settings.local.json
+.claude/*.local.json
+.mcp.local.json
+
+# scratch
+tmp/
+temp/

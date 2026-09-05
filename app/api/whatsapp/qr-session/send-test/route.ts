@@ -6,10 +6,7 @@
 
 import { apiError, unexpectedError } from "@/lib/api-response";
 import { requireQrConnection } from "@/lib/whatsapp-connection";
-import {
-  QueueUnavailableError,
-  requestSendMessage,
-} from "@/whatsapp-connectors/web-qr/session-commands";
+import { connectorFor } from "@/whatsapp-connectors";
 
 /** Long enough for a real test, short enough not to be a broadcast tool. */
 const MAX_TEST_MESSAGE_LENGTH = 500;
@@ -65,22 +62,27 @@ export async function POST(request: Request) {
       );
     }
 
-    await requestSendMessage(found.connection.id, digits, text);
+    const outcome = await connectorFor("QR").sendText({
+      connectionId: found.connection.id,
+      to: digits,
+      body: text,
+    });
 
-    return Response.json({ sending: true }, { status: 202 });
-  } catch (error) {
-    if (error instanceof QueueUnavailableError) {
-      // Redis or the worker host is down. Say so plainly; the real reason is
-      // in the server log, not on the customer's screen (docs/Rules.md §4).
-      console.error("[whatsapp] queue unavailable", error.message);
+    switch (outcome.status) {
+      case "failed":
+        return apiError(outcome.message, "VALIDATION_FAILED", 400);
 
-      return apiError(
-        "WhatsApp connections aren't available right now. Please try again shortly.",
-        "UNEXPECTED_ERROR",
-        503,
-      );
+      case "unavailable":
+        // Redis or the worker host is down. Say so plainly; the real reason is
+        // in the server log, not on the customer's screen (docs/Rules.md §4).
+        return apiError(outcome.message, "UNEXPECTED_ERROR", 503);
+
+      default:
+        // "queued" — the worker has it. Whether it actually arrives comes back
+        // separately, through the event queue.
+        return Response.json({ sending: true }, { status: 202 });
     }
-
+  } catch (error) {
     return unexpectedError("whatsapp/qr-session/send-test", error);
   }
 }

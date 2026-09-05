@@ -4,6 +4,7 @@
 // only creates the account.)
 
 import { apiError, unexpectedError } from "@/lib/api-response";
+import { callerAddress, takeFromBudget } from "@/lib/rate-limit";
 import { db } from "@/lib/db";
 import { hashPassword } from "@/lib/password";
 import {
@@ -15,6 +16,15 @@ import {
 
 export async function POST(request: Request) {
   try {
+    // Counted before anything is read or hashed. Keyed on the address rather
+    // than the email, because somebody creating accounts in bulk simply uses a
+    // different email each time (lib/rate-limit.ts).
+    const budget = await takeFromBudget("signUp", callerAddress(request));
+
+    if (!budget.allowed) {
+      return apiError(budget.message, "RATE_LIMITED", 429);
+    }
+
     let body: Partial<SignUpInput>;
     try {
       body = await request.json();

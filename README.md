@@ -20,12 +20,30 @@ questions about their business, connect WhatsApp, and it goes live.
 
 ## Two ways to connect WhatsApp
 
-|  | **Free** | **Paid** |
+|  | **QR connection** | **Official API** |
 |---|---|---|
 | How it connects | Scan a QR code, like WhatsApp Web | Official WhatsApp Business API from Meta |
-| Best for | Small businesses, lower message volume | Growing businesses that need reliability |
+| Which plans | Every plan, including Free | Growth and Pro |
 | Bulk messages | Up to **25 recipients** per send, spaced out | Large lists, using Meta-approved templates |
 | Risk | Unofficial channel — careless sending can get a number banned | Officially sanctioned |
+
+## What it costs
+
+| | **Free** | **Starter** | **Growth** | **Pro** |
+|---|---|---|---|---|
+| Per month | ₹0 | ₹999 | ₹1,499 | ₹2,499 |
+| Messages sent | 300 | 2,000 | 10,000 | 30,000 |
+| Campaigns | 1 a month | 4 a month | 20 a month | Unlimited |
+| Knowledge answers | 20 | 50 | 100 | 100 |
+| Analytics history | 7 days | 30 days | Everything | Everything |
+| Official WhatsApp API | — | — | ✓ | ✓ |
+
+Every plan runs one agent on one number, so nothing is priced per seat or per
+bot. Payment goes through **Razorpay**, on their own hosted page — no card
+details ever reach ChatWise.
+
+The limits live in one file, [`lib/plans.ts`](lib/plans.ts), and that is the only
+place to change them.
 
 ## One bot, one connection, per account
 
@@ -35,6 +53,33 @@ second account. The database enforces this, not just the screens.
 
 The one exception is the **CRM agent**, which runs quietly in the background
 alongside whichever agent was chosen, keeping contact records up to date.
+
+## What the dashboard does
+
+| Screen | What it's for |
+|---|---|
+| **Overview** | The numbers at a glance, and whether WhatsApp is actually connected |
+| **My bot** | The one agent this account runs — what it knows, how it behaves |
+| **Conversations** | A live inbox. Watch a chat as it happens, take it over, reply yourself, hand it back |
+| **Leads** | The contacts those conversations turned into. Correct anything the agent got wrong, and it leaves that field alone from then on |
+| **Connect WhatsApp** | The QR scanner or the Business API form, and the connection's health |
+| **Knowledge base** | The questions and answers the agent may answer from |
+| **Analytics** | Messages handled, how long people waited, and how many became customers |
+| **Campaigns** | Bulk sends, with the 25-recipient cap, the throttle and the opt-out checks that keep a number safe |
+| **Billing** | Your plan, what you've used this month, and your invoices |
+
+Two things are worth knowing about how it behaves, because they are promises
+rather than preferences:
+
+- **The agent and a person never reply at the same time.** Taking a
+  conversation over — or simply typing a reply into it — stops the agent
+  answering in that thread until you hand it back.
+- **A field you edit on a lead becomes yours.** The background agent keeps the
+  rest current and never overwrites what you corrected, unless you explicitly
+  ask it to for that lead.
+- **Running out of messages never silences you.** If a month's allowance runs
+  out, the agent stops replying by itself and hands those threads to you —
+  answering somebody by hand in the inbox is never limited.
 
 ## What's in this repo
 
@@ -46,7 +91,7 @@ alongside whichever agent was chosen, keeping contact records up to date.
 | `message-router/` | The single front door for incoming messages |
 | `campaigns/` | Bulk outreach, and the safety limits around it |
 | `components/` | Reusable interface pieces |
-| `lib/` | Shared helpers, including the database connection |
+| `lib/` | Shared helpers — the database connection, the inbox, the lead rules, the numbers, the plans and their limits |
 | `prisma/` | The database structure |
 | `jobs/` | Scheduled and background work |
 | `docs/` | The planning documents this project is built from |
@@ -68,10 +113,26 @@ follows them rather than the other way round.
 | [docs/Design.md](docs/Design.md) | Colours, typography, components |
 | [docs/Memory.md](docs/Memory.md) | Running log of what's built, what's in progress, and open questions |
 
+## What runs where
+
+ChatWise is **two processes**, not a separate frontend and backend:
+
+| Process | What it is | Command |
+|---|---|---|
+| **The app** | Next.js — the website, the dashboard *and* every API route, in one process. There is no separate backend server. | `npm run dev` |
+| **The WhatsApp worker** | An always-on Node process that drives free-tier (QR) WhatsApp sessions and sends campaigns. Talks to the app through Redis, never over HTTP. | `npm run whatsapp-worker` |
+
+The app on its own is enough for everything except the free/QR WhatsApp tier and
+campaign sending. Start the worker when you need those.
+
+Both processes read the same `.env`, and both need `GEMINI_API_KEY` — the worker
+answers messages too.
+
 ## Running it locally
 
-You need **Node.js 20.19 or newer** and a **PostgreSQL** database. We use
-[Supabase](https://supabase.com) for the hosted database.
+You need **Node.js 20.19 or newer**, a **PostgreSQL** database
+([Supabase](https://supabase.com) is what we use), and — only for the WhatsApp
+worker — a **Redis**.
 
 ```bash
 # 1. Install dependencies
@@ -80,9 +141,14 @@ npm install
 # 2. Create your local settings file
 cp .env.example .env
 
-# 3. Fill in two things in .env:
-#      DATABASE_URL   your database connection string
-#      AUTH_SECRET    generate one with:  openssl rand -base64 32
+# 3. Fill in three things in .env:
+#      DATABASE_URL     Supabase → Settings → Database → Connection string,
+#                       the POOLED one (port 6543)
+#      DIRECT_URL       the same page, the DIRECT one (port 5432) — migrations only
+#      AUTH_SECRET      generate one with:  openssl rand -base64 32
+#    Add GEMINI_API_KEY (https://aistudio.google.com/apikey) when you want the
+#    bots to actually reply. Without it messages still arrive and are handed to
+#    a person — they are just never answered automatically.
 #    (.env.example explains every other variable and when you'll need it.)
 
 # 4. Create the database tables
@@ -101,6 +167,13 @@ doesn't appear — email and password work on their own.
 The app runs at <http://localhost:3000>. To check the database is connected,
 open <http://localhost:3000/api/health> — it should say `"database": "connected"`.
 
+To bring up the WhatsApp side as well, set `REDIS_URL` (locally:
+`docker run -p 6379:6379 redis`) and run the worker in a second terminal:
+
+```bash
+npm run whatsapp-worker
+```
+
 **No PostgreSQL installed?** Prisma can run one for you locally:
 
 ```bash
@@ -108,21 +181,75 @@ npx prisma dev --name chatwise --detach   # start it
 npx prisma dev ls                         # print its connection URL
 ```
 
-Paste that URL into `DATABASE_URL` in your `.env`, then carry on from step 4.
-Note that it picks a new port each time it is created.
+Paste that URL into `DATABASE_URL` in your `.env`, leave `DIRECT_URL` blank, then
+carry on from step 4. Note that it picks a new port each time it is created.
 
 ### Everyday commands
 
 | Command | What it does |
 |---|---|
 | `npm run dev` | Run the app locally with live reload |
+| `npm run whatsapp-worker` | Run the WhatsApp session + campaign worker |
 | `npm run build` | Build the production version |
 | `npm start` | Run the built production version |
 | `npm run lint` | Check the code for mistakes |
 | `npm run db:migrate` | Apply database changes locally |
+| `npm run db:deploy` | Apply already-written migrations to production |
 | `npm run db:studio` | Open a visual browser for the database |
 
 Run `npx prisma generate` after any change to `prisma/schema.prisma`.
+
+## Deploying
+
+Four pieces, and only one of them has an awkward requirement.
+
+**1. Database — Supabase.** Create the project, then run the migrations against
+it once from your own machine with `DIRECT_URL` pointing at the direct (5432)
+string:
+
+```bash
+npm run db:deploy
+```
+
+Supabase often refuses to let migrations create their scratch "shadow" database.
+If that happens, create a second empty database and point `SHADOW_DATABASE_URL`
+at it.
+
+**2. The app — any Node host; Vercel is the easy one.** `npm run build` is the
+build command and it runs `prisma generate` first. Set every variable from
+`.env.example` that you actually use, and note two:
+
+- `DATABASE_URL` must be the **pooled** (6543) string, with
+  `?pgbouncer=true&connection_limit=1` kept on the end. Serverless opens and
+  drops connections constantly; the pooler is what stops that exhausting the
+  database.
+- `AUTH_URL` must be your real https domain, and `AUTH_SECRET` must be a
+  *different* value from your local one. Off Vercel, also set
+  `AUTH_TRUST_HOST="true"`.
+
+**3. The WhatsApp worker — not Vercel.** It is a long-lived process that drives a
+real Chrome, so it needs a host that runs containers or plain VMs (Railway,
+Render, Fly, a VPS). Give it the same `.env` values as the app plus `CHROME_PATH`
+and `WHATSAPP_SESSION_PATH` on a **persistent disk** — that folder is what keeps
+customers logged into WhatsApp across restarts. Start it with
+`npm run whatsapp-worker`.
+
+Skip this box entirely if you only sell the paid/Business-API tier: that tier is
+webhooks, and the app serves those itself.
+
+**4. Redis.** Both boxes point `REDIS_URL` at the same one (Upstash, Railway, or
+your own). It is how the app and the worker talk.
+
+Then, in the vendors' dashboards:
+
+- **Razorpay** → Webhooks → `https://<your-domain>/api/billing/webhook`,
+  subscribed to the `subscription.*` events.
+- **Meta**, per paying customer — each one gets their own webhook address; the
+  Connect WhatsApp screen shows them what to paste.
+
+Finally, open `https://<your-domain>/api/health`. It reports the database and
+Redis honestly, which makes it the fastest way to catch a variable you set on
+one box and forgot on the other.
 
 ## Secrets
 
@@ -132,23 +259,32 @@ in [`.env.example`](.env.example). Your real `.env` file is never committed.
 
 ## Current status
 
-Phases 0–4 are done and tested: the public website, accounts and login, the
-setup wizard, and the dashboard with its **My bot** page.
+**All fourteen phases are built**, and typecheck, lint and `npm run build` are
+clean. That covers the public website, accounts and login, the setup wizard, the
+dashboard, both ways of connecting WhatsApp, all nine agents plus the background
+CRM agent, the message router, the live inbox with human handover, the leads
+screens, analytics, campaigns, billing, and the hardening pass.
 
-**Phase 5 — connecting a real WhatsApp number by QR code — is built but not yet
-proven end to end.** It needs two things this machine didn't have: a Redis, and
-a phone to scan with. See [docs/Memory.md](docs/Memory.md) for exactly how to
-finish it.
+What is *proven* is narrower, and worth being straight about:
 
-To run the WhatsApp side you need a Redis and a second process:
+- Everything above passed 658 automated checks covering the router, every agent,
+  handover, the lead-ownership rules, every analytics figure, every bulk-sending
+  safety rule, every plan limit, and a standing audit that every API route checks
+  who is asking and no screen shows a raw code.
+- Those checks use a **stub model**, a **stub WhatsApp connection** and a
+  **hand-built payment webhook**. So the plumbing and the guard rails are
+  verified; the quality of a real reply, the behaviour of a real WhatsApp
+  number, and a real payment are not.
 
-```bash
-npm run dev              # the app
-npm run whatsapp-worker  # the WhatsApp sessions (needs REDIS_URL + CHROME_PATH)
-```
+Four things are needed to finish that off, and none of them is code:
 
-One thing to know: **the pricing page has no Business API price on it yet** — it
-says so on the page — because that number hasn't been decided.
+1. A **`GEMINI_API_KEY`** — the worker host needs it too, not just the web app.
+2. A **connected WhatsApp number**, on either tier.
+3. **Razorpay keys and one plan per paid tier**, created in the Razorpay
+   dashboard at ₹999, ₹1,499 and ₹2,499. Leave them out and the app runs
+   perfectly well with payments off — nothing is limited, and the billing screen
+   says so.
+4. An **email service**, so "forgot password" can exist at all.
 
 See [docs/Memory.md](docs/Memory.md) for exactly where things stand, including
 what's known to be missing.

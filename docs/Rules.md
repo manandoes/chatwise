@@ -4,7 +4,11 @@ These rules apply to any AI (or human) writing code in this repo. When in doubt,
 
 ## 1. Stack Discipline
 
-- **Do** use: Next.js (App Router), TypeScript, Prisma + PostgreSQL, Tailwind + shadcn/ui, NextAuth.js, BullMQ + Redis, whatsapp-web.js (free tier only), WhatsApp Business Cloud API (paid tier only), Stripe.
+- **Do** use: Next.js (App Router), TypeScript, Prisma + PostgreSQL, Tailwind + shadcn/ui, NextAuth.js, BullMQ + Redis, whatsapp-web.js (free tier only), WhatsApp Business Cloud API (paid tier only), Razorpay.
+  - **Razorpay, not Stripe.** The product owner chose Razorpay on 2026-09-05,
+    settling the open question in PRD.md §10. Every call to it lives in
+    `lib/razorpay.ts` and nowhere else, so a future change of provider is one
+    file rather than a change threaded through the app.
 - **Don't** introduce a new framework, database, state-management library, CSS approach, or auth system without it being written into Architecture.md first. If a task seems to need one, stop and flag it instead of silently adding a dependency.
 - **Don't** use class components — functional components + hooks only.
 - **Don't** reach for a new npm package if the standard library, an already-installed package, or a few lines of plain code can do it. Every new dependency is something the (non-technical) product owner now has to trust.
@@ -20,7 +24,7 @@ These rules apply to any AI (or human) writing code in this repo. When in doubt,
 ## 3. Secrets & Security
 
 - **Never** hardcode API keys, tokens, database URLs, or any secret in source code — always read from environment variables, and add the variable (with a placeholder value and a comment) to `.env.example`.
-- **Never** expose a WhatsApp Business API token, Stripe secret key, or database credential to the frontend/browser. Anything the browser needs must go through a server-side API route.
+- **Never** expose a WhatsApp Business API token, the Razorpay key secret, or a database credential to the frontend/browser. Anything the browser needs must go through a server-side API route.
 - WhatsApp session data (QR-tier) and API credentials (paid tier) must be encrypted at rest in the database, not stored as plain text.
 - Every dashboard/API route must check that the logged-in user actually owns the Business/AgentInstance/Conversation they're trying to read or modify — no trusting an ID from the request alone (prevents one customer from seeing another's data).
 

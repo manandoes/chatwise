@@ -15,8 +15,10 @@ import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import { redirect } from "next/navigation";
 
+import { apiError } from "@/lib/api-response";
 import { db } from "@/lib/db";
 import { fakePasswordCheck, verifyPassword } from "@/lib/password";
+import { takeFromBudget } from "@/lib/rate-limit";
 import { normalizeEmail } from "@/lib/validation/auth";
 
 // Tells TypeScript that our sessions carry the user's id, so pages and API
@@ -87,6 +89,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         if (!email || !password) return null;
 
+        // Password guessing, slowed down. Keyed on the email being tried rather
+        // than the address: an attacker with a list of passwords for one
+        // account is the case worth stopping, and they may well come from many
+        // addresses. Failing open when Redis is down is deliberate — see
+        // lib/rate-limit.ts.
+        const budget = await takeFromBudget("signIn", email);
+
+        if (!budget.allowed) return null;
+
         const user = await db.user.findUnique({ where: { email } });
 
         // No account, or an account that only signs in with Google. Spend the
@@ -152,4 +163,44 @@ export async function getApiUser() {
   const session = await auth();
 
   return session?.user?.id ? session.user : null;
+}
+
+
+/**
+ * The signed-in user's business, or the response to send back instead.
+ *
+ * Every route that reads or changes something belonging to an account starts
+ * here. The business is found from the session's user id and never from
+ * anything in the request, so the id a caller supplies can only ever narrow
+ * what they already own (docs/Rules.md §3).
+ */
+export async function requireApiBusiness(): Promise<
+  { ok: true; businessId: string } | { ok: false; response: Response }
+> {
+  const user = await getApiUser();
+
+  if (!user) {
+    return {
+      ok: false,
+      response: apiError("Please sign in again.", "NOT_AUTHENTICATED", 401),
+    };
+  }
+
+  const business = await db.business.findUnique({
+    where: { userId: user.id },
+    select: { id: true },
+  });
+
+  if (!business) {
+    return {
+      ok: false,
+      response: apiError(
+        "Finish setting up your account first.",
+        "NOT_FOUND",
+        404,
+      ),
+    };
+  }
+
+  return { ok: true, businessId: business.id };
 }

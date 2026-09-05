@@ -20,6 +20,20 @@ import whatsappWeb from "whatsapp-web.js";
 
 const { Client, RemoteAuth } = whatsappWeb;
 
+/**
+ * The parts of an incoming message we use.
+ *
+ * whatsapp-web.js ships its own types, but it is a CommonJS package brought in
+ * whole, so naming what we actually touch is clearer than casting.
+ */
+type WaMessage = {
+  from?: string;
+  body?: string;
+  type?: string;
+  id?: { _serialized?: string };
+  getContact?: () => Promise<{ pushname?: string; name?: string } | undefined>;
+};
+
 import { createEncryptedSessionStore, sessionNameFor } from "./session-store.ts";
 import type { SessionEvent } from "./protocol.ts";
 
@@ -114,12 +128,66 @@ client.on("disconnected", (reason: string) => {
   });
 });
 
-client.on("message", () => {
-  // Only that a message arrived — never what it said. Routing messages to a bot
-  // is Phase 7; until then there is no reason for a customer's private
-  // conversations to travel anywhere (docs/Rules.md §4).
-  report({ type: "inbound", connectionId, at: new Date().toISOString() });
+client.on("message", async (message: WaMessage) => {
+  // Only one-to-one chats. A WhatsApp account also receives group messages and
+  // status updates, and an agent replying inside somebody's group chat — or to
+  // a status — would be both wrong and embarrassing.
+  if (!message.from?.endsWith("@c.us")) return;
+
+  const isText = message.type === "chat" && Boolean(message.body?.trim());
+
+  // The name their phone reports. Asking for it can fail if the contact is
+  // gone, and a missing name is not worth losing the message over.
+  let contactName: string | null = null;
+
+  try {
+    const contact = await message.getContact?.();
+    contactName = contact?.pushname ?? contact?.name ?? null;
+  } catch {
+    contactName = null;
+  }
+
+  report({
+    type: "inbound",
+    connectionId,
+    at: new Date().toISOString(),
+    from: message.from.replace(/\D/g, ""),
+    text: isText ? message.body : describe(message.type),
+    answerable: isText,
+    contactName,
+    externalId: message.id?._serialized ?? null,
+  });
 });
+
+/**
+ * What to record when the message wasn't text an agent could read.
+ *
+ * There is a similar list in the Business API handler. They look alike but are
+ * not the same thing: whatsapp-web.js and Meta name these kinds differently
+ * ("chat" vs "text", "ptt" vs "audio", "vcard" vs "contacts"), so sharing one
+ * table would mean a mapping that is wrong for both.
+ */
+function describe(type: string | undefined): string {
+  switch (type) {
+    case "image":
+      return "Sent a photo.";
+    case "video":
+      return "Sent a video.";
+    case "ptt":
+    case "audio":
+      return "Sent a voice message.";
+    case "document":
+      return "Sent a document.";
+    case "sticker":
+      return "Sent a sticker.";
+    case "location":
+      return "Shared a location.";
+    case "vcard":
+      return "Shared a contact.";
+    default:
+      return "Sent a message we couldn't read.";
+  }
+}
 
 // ─── What the manager asks us to do ─────────────────────────────────────────
 
