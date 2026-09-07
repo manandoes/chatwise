@@ -12,7 +12,7 @@
 // be repeated — and kept in step — in every feature that sends anything.
 //
 // What this file deliberately does NOT hide is the one difference that is real:
-// the paid tier can say "sent", the free tier can only honestly say "accepted
+// the API tier can say "sent", the QR tier can only honestly say "accepted
 // for sending". Flattening those two into a single boolean would mean telling a
 // customer a message was delivered when nobody knows yet (docs/Rules.md §4), so
 // `SendOutcome` keeps them apart and callers decide how to phrase it.
@@ -106,7 +106,7 @@ function toDigits(raw: string): string {
   return raw.replace(/\D/g, "");
 }
 
-/** The paid tier: an ordinary HTTPS call that knows its own outcome. */
+/** The API tier: an ordinary HTTPS call that knows its own outcome. */
 const businessApiConnector: WhatsAppConnector = {
   type: "API",
   capabilities: capabilitiesFor("API"),
@@ -142,7 +142,7 @@ const businessApiConnector: WhatsAppConnector = {
   },
 };
 
-/** The free tier: a command handed to a worker, over a queue, on another host. */
+/** The QR tier: a command handed to a worker, over a queue, on another host. */
 const qrConnector: WhatsAppConnector = {
   type: "QR",
   capabilities: capabilitiesFor("QR"),
@@ -185,14 +185,14 @@ const qrConnector: WhatsAppConnector = {
   },
 
   async sendTemplate() {
-    // Meta templates belong to a Meta app, and a free-tier account does not
+    // Meta templates belong to a Meta app, and a QR-tier account does not
     // have one. Saying so is better than quietly sending the template's text as
     // an ordinary message: on this tier the words go out unreviewed either way,
     // and a caller that asked for a template should learn it did not get one.
     return {
       status: "failed",
       message:
-        "Approved templates are part of the WhatsApp Business API. On the free connection, messages send as ordinary text.",
+        "Approved templates are part of the WhatsApp Business API. On the QR connection, messages send as ordinary text.",
     };
   },
 };

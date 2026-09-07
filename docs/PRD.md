@@ -6,13 +6,13 @@
 
 [SaaS_NAME] is a subscription SaaS that lets a business set up one or more pre-built **WhatsApp AI agents** (bots) — a Receptionist, a Lead Qualifier, a Sales agent, etc. — connect them to their own WhatsApp number, and manage every conversation, lead, and setting from a single dashboard.
 
-The customer doesn't build a bot from scratch. They **pick which agents they want**, answer a short setup questionnaire about their business, and the agent goes live on their WhatsApp — either through the official **WhatsApp Business API** (paid, per-message, for larger businesses) or through a **WhatsApp Web QR-code connection** (free tier, for small businesses with lower volume).
+The customer doesn't build a bot from scratch. They **pick which agents they want**, answer a short setup questionnaire about their business, and the agent goes live on their WhatsApp — either through the official **WhatsApp Business API** (for larger businesses; the platform subscription plus Meta's own per-conversation charges, billed by Meta) or through a **WhatsApp Web QR-code connection** (for small businesses with lower volume; the platform subscription and nothing per message). **Both tiers are paid** — there is no free plan.
 
 ## 2. Who This Is For
 
 | User type | Description | What they care about |
 |---|---|---|
-| Small business owner | Runs a shop/service, low message volume, price-sensitive | Free tier, easy QR setup, doesn't want to pay per message |
+| Small business owner | Runs a shop/service, low message volume, price-sensitive | QR tier, easy QR setup, wants one predictable monthly bill and nothing charged per message |
 | Growing/mid-size business | Higher volume, wants reliability | Official API, analytics, uptime (runs additional accounts if they need more than one bot) |
 | Agency / reseller (future) | Manages [SaaS_NAME] for multiple clients | Multi-account/workspace management (Phase 5+, not MVP) |
 
@@ -24,13 +24,13 @@ All three are non-technical. They should never need to see code, JSON, or a term
 2. **Sign up / Log in** — email+password or Google OAuth.
 3. **Onboarding wizard** (slide-by-slide, one question per screen):
    - Step A — *Which bot do you want?* (grid of the agents listed in §5 — **single-select, exactly one bot per account**; see §3.1)
-   - Step B — *How do you want to run it?* — **WhatsApp Business API** (paid, per-message) **OR** **Free QR connection** (whatsapp-web.js) — **single-select, exactly one connection type per account**; see §3.1)
+   - Step B — *How do you want to run it?* — **WhatsApp Business API** (for larger businesses; adds Meta's per-conversation charges, billed by Meta) **OR** **QR connection** (whatsapp-web.js; for small businesses, no per-message cost) — both need a paid plan — **single-select, exactly one connection type per account**; see §3.1)
    - Step C — *Tell us about your business/product* — questions vary depending on which bot was picked in Step A (e.g. Sales agent asks for catalog/pricing info; Support agent asks about order system; Appointment agent asks about calendar/booking hours)
    - Step D — *How should the bot act?* — tone/personality, language, escalation rules (when to hand off to a human)
 4. **Main Dashboard** — the app proper (see §6).
 5. **WhatsApp connection screen** — inside the dashboard:
    - If API tier: form to enter WhatsApp Business API credentials (Meta App ID, phone number ID, access token) with a step-by-step guide.
-   - If Free tier: QR code shown on screen, user scans with their phone's WhatsApp, session persists per user.
+   - If QR tier: QR code shown on screen, user scans with their phone's WhatsApp, session persists per user.
 6. **Billing** — subscription checkout (plan selection, payment), managed through Razorpay's hosted payment pages so no card details reach ChatWise.
 
 ### 3.1 Account Constraints (hard rules)
@@ -49,7 +49,7 @@ These constraints must be enforced in the data model and UI (see Architecture.md
 
 - Subscription tiers (monthly/annual), gated by:
   - Message volume / conversation volume
-  - Free tier (QR/whatsapp-web.js) vs Paid tier (official WhatsApp Business API, which itself has Meta's own per-message cost passed through or marked up)
+  - QR tier (QR/whatsapp-web.js) vs API tier (official WhatsApp Business API). Both require a paid subscription; on the API tier Meta additionally bills the customer per conversation, directly against their own Meta account, at Meta's rates. That charge never passes through us and is never quoted by us.
   - Possibly *which* bot type is available on which plan (business decision — flag in §10)
   - Note: since each account runs exactly one bot on one connection type (see §3.1), plans are **not** gated by "number of agents" — a business needing more runs additional accounts/subscriptions.
 - Exact pricing numbers are a business decision, not covered here — Design/PRD only need placeholders on the pricing page until finalized.
@@ -82,7 +82,7 @@ Notes:
 - **My Bot** — the single agent this account runs: view/edit its configuration, personality, knowledge base, and escalation rules. (Not a multi-agent list — one bot per account, per §3.1. Switching bot type here triggers a re-setup, not an addition.)
 - **Conversations / Inbox** — live view of WhatsApp chats the bots are handling, with ability for a human to jump in and take over a conversation.
 - **Leads / CRM** — table of captured leads/contacts with status, score, tags (fed by Lead Qualifier + CRM agents).
-- **Connect WhatsApp** — the API-credentials form (paid tier) or QR scanner (free tier), connection health/status indicator, reconnect button.
+- **Connect WhatsApp** — the API-credentials form (API tier) or QR scanner (QR tier), connection health/status indicator, reconnect button.
 - **Knowledge Base** — where the business's FAQs, product catalog, policies, etc. are uploaded/edited (feeds Receptionist, Sales, Personal Shopper).
 - **Campaigns / Outreach** — send a message template to a list of contacts, schedule sends, and track delivery/read/reply. Tier-limited (see §7). Includes a template library (see §7.1), contact-list segmentation, and opt-out/consent tracking.
 - **Analytics** — messages handled, response time, conversion (lead → sale), agent-by-agent breakdown.
@@ -95,27 +95,32 @@ Broadcast/outreach lets a business send one message (personalized per recipient)
 
 ### 7.1 Tier limits (hard rules)
 
-| | **Free tier (QR / whatsapp-web.js)** | **Paid tier (WhatsApp Business API)** |
+Both tiers require a paid ChatWise subscription. The cost row below is the only
+commercial difference between them; everything else here is about safety.
+
+| | **QR tier (QR / whatsapp-web.js)** | **API tier (WhatsApp Business API)** |
 |---|---|---|
+| Who it's for | Small businesses | Larger businesses |
+| Cost | The ChatWise subscription only — nothing charged per message | The ChatWise subscription **plus Meta's per-conversation charges**, billed by Meta directly to the customer at Meta's rates. Never quoted by us (docs/Rules.md §9) |
 | Max recipients per send | **25 numbers at a time** (hard cap) | Large lists (subject to Meta messaging tier/quality rating) |
 | Method | Sent through the user's own QR session | Official API with **pre-approved templates** |
 | Throttling | Sends spaced out with a delay between each message (not fired instantly) | API + Meta rate limits apply |
 | Warning shown | **Yes — mandatory** (see §7.2) | Standard opt-out/compliance notice |
 | Risk | High — unofficial channel, can get the number banned | Low — officially sanctioned channel |
 
-- The **25-number cap on the free tier is enforced in code**, not just suggested — the send button disables past 25 selected recipients, and the API route rejects any free-tier send with more than 25 recipients.
-- Sends on the free tier are **throttled** (a delay between each of the 25 messages) to reduce ban risk — never fired as an instant blast.
+- The **25-number cap on the QR tier is enforced in code**, not just suggested — the send button disables past 25 selected recipients, and the API route rejects any QR-tier send with more than 25 recipients.
+- Sends on the QR tier are **throttled** (a delay between each of the 25 messages) to reduce ban risk — never fired as an instant blast.
 
-### 7.2 Mandatory free-tier warning
+### 7.2 Mandatory QR-tier warning
 
-Before a free-tier user sends any bulk message, show a clear warning they must acknowledge, e.g.:
+Before a QR-tier user sends any bulk message, show a clear warning they must acknowledge, e.g.:
 > ⚠️ You're sending from a WhatsApp Web connection. Sending to people who haven't opted in, or sending too often, can get your WhatsApp number **banned by WhatsApp**. Only message contacts who expect to hear from you. For safe, large-scale outreach, upgrade to the WhatsApp Business API.
 
-This doubles as an upsell path to the paid tier.
+This doubles as an upsell path to the API tier.
 
 ### 7.3 Predefined message templates (starter library)
 
-Ship the app with a starter library of ready-to-use templates so non-technical users aren't staring at a blank box. Users can edit them or write their own. On the paid tier, templates must be submitted to Meta for approval before use; on the free tier they send as-is (covered by the warning). Placeholders like `{name}` are auto-filled per recipient.
+Ship the app with a starter library of ready-to-use templates so non-technical users aren't staring at a blank box. Users can edit them or write their own. On the API tier, templates must be submitted to Meta for approval before use; on the QR tier they send as-is (covered by the warning). Placeholders like `{name}` are auto-filled per recipient.
 
 Suggested starter templates (grouped):
 
@@ -147,7 +152,7 @@ Every outbound bulk template must include (or the system must append) an **opt-o
 ## 8. Non-Functional Requirements
 
 - **Non-technical friendliness**: every screen should be understandable without any coding knowledge — this also drives the folder-naming requirement in Architecture.md (bot folders named after the bot, not generic code terms).
-- **Multi-tenant & isolated**: one customer's WhatsApp session/data must never be visible to or interfere with another's — especially important for the free-tier QR sessions, which must run as isolated per-user processes/sessions.
+- **Multi-tenant & isolated**: one customer's WhatsApp session/data must never be visible to or interfere with another's — especially important for the QR-tier QR sessions, which must run as isolated per-user processes/sessions.
 - **Reliability**: WhatsApp connections (both API and QR/web) should auto-reconnect and alert the user if disconnected.
 - **Scalability**: architecture should allow adding new agent types without restructuring the whole app.
 - **Security**: WhatsApp Business API tokens and QR session data are sensitive — encrypted at rest, never exposed to the frontend.
@@ -162,8 +167,9 @@ Every outbound bulk template must include (or the system must append) an **opt-o
 
 ## 10. Open Questions (flag to product owner before/while building)
 
-- ~~Final pricing tiers and limits per plan~~ — **settled 2026-09-05.** Four plans: Free, Starter ₹999, Growth ₹1,499, Pro ₹2,499 a month. The prices are the owner's; the limits behind each one were chosen in code and live in `lib/plans.ts`, which is the single file to edit to change any of them.
+- ~~Final pricing tiers and limits per plan~~ — **settled 2026-09-05.** **Two plans, one per connection tier and nothing else**, both paid: Small Business ₹999 (QR) and Enterprise ₹1,499 (Business API). There is no free plan and no ladder of sizes within a tier — the plan a business buys *is* the way it connects. The prices are the owner's; the limits behind each one were chosen in code and live in `lib/plans.ts`, which is the single file to edit to change any of them.
+- ~~**What each connection tier costs**~~ — **settled 2026-09-05: both are paid.** The QR tier is for small businesses and the subscription is their whole bill, with no per-message cost. The API tier is for larger businesses and adds Meta's per-conversation charges, which Meta bills directly to the customer's own Meta account at Meta's rates. We never take a cut of it, never mark it up, and never quote a figure for it (docs/Rules.md §9).
 - ~~Which payment gateway~~ — **settled 2026-09-05: Razorpay.** Every call to it is in `lib/razorpay.ts`.
 - Exact Meta WhatsApp Business API onboarding requirements (Meta approval process, business verification) — user-facing copy for the "Connect WhatsApp" screen should be written once this is confirmed
 - **Switching setup:** when a user wants to change their bot type or connection type (§3.1), what exactly happens — a full re-onboarding on the same account (wiping the old bot's config), an admin-assisted reset, or requiring a new account/subscription? Pick one before building the "My Bot" settings screen.
-- ~~**CRM agent availability**~~ — **settled 2026-09-05: always included, on every plan including Free.** It says nothing to anybody and only keeps one record per contact up to date; making it a paid extra would mean a free account's leads screen was silently empty, which reads as broken rather than as an upsell.
+- ~~**CRM agent availability**~~ — **settled 2026-09-05: always included, on every plan.** It says nothing to anybody and only keeps one record per contact up to date; making it a paid extra would mean the cheapest plan's leads screen was silently empty, which reads as broken rather than as an upsell.

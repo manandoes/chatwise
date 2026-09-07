@@ -2,10 +2,10 @@
 
 // The messages a business keeps to reuse.
 //
-// On the free tier this is a convenience — somewhere to keep wording you send
-// often. On the paid tier it is closer to a record: the words live at Meta,
+// On the QR tier this is a convenience — somewhere to keep wording you send
+// often. On the API tier it is closer to a record: the words live at Meta,
 // under a name they approved, and this is where the account writes down what
-// that name is. The form changes shape accordingly, because asking a free-tier
+// that name is. The form changes shape accordingly, because asking a QR-tier
 // customer for a Meta template name would be asking about something they do
 // not have (docs/Rules.md §7).
 
@@ -59,7 +59,7 @@ export function TemplateEditor({
   optOutLine,
 }: {
   templates: EditableTemplate[];
-  /** True on the paid tier, where a template is a thing registered at Meta. */
+  /** True on the API tier, where a template is a thing registered at Meta. */
   needsMetaApproval: boolean;
   optOutLine: string;
 }) {

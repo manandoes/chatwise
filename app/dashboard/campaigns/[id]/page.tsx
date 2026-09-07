@@ -1,6 +1,6 @@
 // One campaign, and what became of every message in it.
 //
-// The honest bit is the free tier's: it can say a message was handed to
+// The honest bit is the QR tier's: it can say a message was handed to
 // WhatsApp and nothing more, because a QR connection reports nothing back
 // (`supportsDeliveryReceipts` in whatsapp-connectors/capabilities.ts). Showing
 // "delivered" there would be a guess dressed up as a fact (docs/Rules.md §4),
@@ -124,8 +124,8 @@ export default async function CampaignPage({
 
       {campaign.tier === "QR" && (
         <p className="max-w-[70ch] text-pretty text-xs leading-relaxed text-text-secondary">
-          Your free connection tells us a message was handed to WhatsApp, but
-          not whether it was delivered or read — so that&rsquo;s as much as this
+          Your QR connection tells us a message was handed to WhatsApp, but not
+          whether it was delivered or read — so that&rsquo;s as much as this
           page can honestly show. A reply is the one signal it does get.
         </p>
       )}

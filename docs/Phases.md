@@ -24,7 +24,7 @@ Each phase should be fully working and testable before moving to the next. Don't
 
 ## Phase 3 — Onboarding Wizard
 - Step A: Choose bot — **single-select** agent picker UI, reads from the fixed catalog (PRD.md §5). One bot per account (PRD.md §3.1).
-- Step B: Connection type — API **or** QR/free, **single-select** (never both), explanation copy for each
+- Step B: Connection type — API **or** QR, **single-select** (never both), explanation copy for each
 - Step C: Business/product questions — dynamic based on the bot chosen
 - Step D: Bot behavior — tone, language, escalation rules
 - Persist all onboarding answers to the `Business` and `AgentInstance` tables — with **unique constraints** enforcing one AgentInstance + one WhatsAppConnection per Business (Rules.md §6)
@@ -35,13 +35,13 @@ Each phase should be fully working and testable before moving to the next. Don't
 - **My Bot** page: shows the account's single chosen bot from onboarding, edit its config. No "add bot" affordance (Rules.md §6). Changing bot type here is a re-setup, not an addition.
 - **Done when:** dashboard navigation works end-to-end, My Bot page reflects the one bot from onboarding data
 
-## Phase 5 — WhatsApp Connection (Free/QR Tier First)
+## Phase 5 — WhatsApp Connection (QR Tier First)
 - Build the `web-qr` connector: worker process, session manager, QR generator
 - Connect WhatsApp page: QR code display, connection status, disconnect/reconnect
 - Isolated per-user process behavior confirmed working (Architecture.md §5)
 - **Done when:** a real WhatsApp account can be connected via QR scan and a test message can be sent/received through it
 
-## Phase 6 — WhatsApp Connection (Paid/Business API Tier)
+## Phase 6 — WhatsApp Connection (Business API Tier)
 - Build the `business-api` connector: webhook handler, send-message endpoint
 - Connect WhatsApp page: credentials form + setup guide for API tier
 - **Done when:** a test WhatsApp Business API account can send/receive through the app
@@ -75,11 +75,11 @@ Each phase should be fully working and testable before moving to the next. Don't
 ## Phase 12 — Campaigns / Bulk Outreach
 - Campaigns page: build a contact list/segment, pick or edit a template, schedule/send
 - Ship the predefined starter template library (PRD.md §7.3); allow user-created templates
-- Free-tier (QR): enforce the **25-recipient cap** + throttle + mandatory warning (Rules.md §8)
-- Paid-tier (API): template approval flow, larger sends
+- QR-tier (QR): enforce the **25-recipient cap** + throttle + mandatory warning (Rules.md §8)
+- API-tier (API): template approval flow, larger sends
 - Opt-out (STOP) handling + exclude opted-out contacts on every send
 - Delivery/read/reply tracking per campaign
-- **Done when:** a free-tier user can send a throttled ≤25-recipient campaign (after acknowledging the warning) and a paid-tier user can send an approved-template campaign, with opt-outs respected and results tracked
+- **Done when:** a QR-tier user can send a throttled ≤25-recipient campaign (after acknowledging the warning) and an API-tier user can send an approved-template campaign, with opt-outs respected and results tracked
 
 ## Phase 13 — Billing & Subscriptions
 - Razorpay integration: plan selection, hosted checkout, webhook handling for subscription status (the plan documents said Stripe; the owner chose Razorpay on 2026-09-05)
@@ -98,8 +98,9 @@ Each phase should be fully working and testable before moving to the next. Don't
 security headers, a last-resort error screen, a dashboard loading state and a
 standing source audit (118 checks) are all in. What still stands between this
 and a real paying customer is not code: a `GEMINI_API_KEY`, a connected
-WhatsApp number, a Razorpay account with one plan per paid tier, and an email
-service so that "forgot password" can exist. See docs/Memory.md.
+WhatsApp number, a Razorpay account with one Razorpay plan per ChatWise plan
+(all three are paid), and an email service so that "forgot password" can exist.
+See docs/Memory.md.
 
 The model provider is **Google Gemini** (`gemini-3.8-flash`), chosen by the
 product owner on 2026-09-05. It is reached over plain HTTPS from

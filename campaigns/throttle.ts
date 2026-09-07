@@ -1,10 +1,15 @@
 // Spacing a bulk send out instead of firing it all at once.
 //
 // This is a safety feature, not a performance setting (docs/Rules.md §8). On
-// the free tier a burst of identical messages from one number is the pattern
+// the QR tier a burst of identical messages from one number is the pattern
 // that gets that number banned by WhatsApp, and the customer's own business
 // phone is what pays for it. **Do not shorten these numbers to make a send
 // finish faster.**
+//
+// The spacing follows the connection, not the price. Both tiers are paid; the
+// QR tier is throttled because it runs over an ordinary WhatsApp number that
+// can be banned, and the API tier is not because Meta polices its own channel
+// and charges per conversation for the privilege.
 //
 // Two honest caveats about the figures below:
 //
@@ -21,21 +26,21 @@
 // onto each recipient row as `sendAfter`. That means the spacing survives a
 // restart of the sender and cannot be quietly undone by a retry loop.
 
-/** The average gap between two free-tier messages. */
-export const FREE_TIER_GAP_MS = 45_000;
+/** The average gap between two messages on the QR tier. */
+export const QR_TIER_GAP_MS = 45_000;
 
 /** How far either side of that gap a message may land. */
-export const FREE_TIER_JITTER_MS = 15_000;
+export const QR_TIER_JITTER_MS = 15_000;
 
-/** No spacing imposed on the paid tier — Meta's own rate limits apply. */
-export const PAID_TIER_GAP_MS = 0;
+/** No spacing imposed on the API tier — Meta's own rate limits apply. */
+export const API_TIER_GAP_MS = 0;
 
 export type Spacing = { gapMs: number; jitterMs: number };
 
 export function spacingFor(tier: "QR" | "API"): Spacing {
   return tier === "QR"
-    ? { gapMs: FREE_TIER_GAP_MS, jitterMs: FREE_TIER_JITTER_MS }
-    : { gapMs: PAID_TIER_GAP_MS, jitterMs: 0 };
+    ? { gapMs: QR_TIER_GAP_MS, jitterMs: QR_TIER_JITTER_MS }
+    : { gapMs: API_TIER_GAP_MS, jitterMs: 0 };
 }
 
 /**
@@ -69,9 +74,9 @@ export function planSendTimes(
  * Roughly how long a send of this size will take, for the screen to say so
  * before somebody commits to it.
  *
- * A free-tier campaign to twenty-five people runs for the better part of
- * twenty minutes. Somebody should know that before they press send, not
- * afterwards when they wonder why only four have gone.
+ * A QR-tier campaign to twenty-five people runs for the better part of twenty
+ * minutes. Somebody should know that before they press send, not afterwards
+ * when they wonder why only four have gone.
  */
 export function estimatedDurationMs(count: number, { gapMs }: Spacing): number {
   return count <= 1 ? 0 : (count - 1) * gapMs;

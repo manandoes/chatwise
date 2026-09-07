@@ -1,23 +1,29 @@
 // The two ways to connect a number, from docs/PRD.md §3 (Step B) and §7.1.
 //
-// The free tier's ban risk is stated plainly rather than buried. Someone who
+// The QR connection's ban risk is stated plainly rather than buried. Someone who
 // finds that out after their number is gone is a worse outcome than someone who
-// reads it here and picks the paid tier — and docs/Rules.md §8 treats that
+// reads it here and picks the Business API — and docs/Rules.md §8 treats that
 // warning as a safety feature, not marketing copy to soften.
+//
+// Both routes are paid, and the difference in what they cost is stated as
+// plainly as the difference in what they do: the QR connection is covered by the
+// subscription alone, and the Business API adds Meta's own per-conversation
+// charges, billed by Meta. No rate is quoted for Meta's side anywhere — the
+// numbers are theirs and vary by country (docs/Rules.md §9).
 
 import { QrCode, ShieldCheck } from "lucide-react";
 
 const OPTIONS = [
   {
-    id: "free",
+    id: "qr",
     icon: QrCode,
     name: "QR connection",
-    tagline: "Free tier",
+    tagline: "For small businesses",
     summary:
       "Scan a code with your phone, exactly like WhatsApp Web. Your number, working in minutes, with nothing to apply for.",
     points: [
+      "Your monthly plan is the whole bill — nothing is charged per message",
       "Set up in minutes — no Meta application or business verification",
-      "No per-message cost",
       "Bulk sends capped at 25 people at a time, spaced out",
       "Unofficial channel: messaging people who didn't ask to hear from you can get your number banned",
     ],
@@ -27,13 +33,13 @@ const OPTIONS = [
     id: "api",
     icon: ShieldCheck,
     name: "WhatsApp Business API",
-    tagline: "Paid tier",
+    tagline: "For larger businesses",
     summary:
       "The official channel from Meta. Built for volume, with the reliability that comes from being sanctioned rather than tolerated.",
     points: [
+      "Your monthly plan, plus Meta's per-conversation charges billed to you by Meta at their rates",
       "Official, supported connection",
       "Large contact lists, using templates Meta has approved",
-      "Meta charges per message; that cost is passed through",
       "Requires a Meta application and business verification before you can start",
     ],
     highlighted: true,
@@ -48,9 +54,10 @@ export function ConnectionOptions() {
           Two ways onto WhatsApp
         </h2>
         <p className="mt-4 text-pretty text-text-secondary">
-          You pick one when you sign up. An account is either free-tier or
-          API-tier — never both at once — so there is never any doubt about which
-          route a message went out by.
+          You pick one when you sign up. An account is on the QR connection or
+          the Business API — never both at once — so there is never any doubt
+          about which route a message went out by. Both need a paid plan; only
+          the Business API adds charges from Meta on top of it.
         </p>
       </div>
 

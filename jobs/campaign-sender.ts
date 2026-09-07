@@ -1,9 +1,9 @@
 // The clock behind a bulk send.
 //
-// A free-tier campaign to twenty-five people is spaced out over the better part
+// A QR-tier campaign to twenty-five people is spaced out over the better part
 // of twenty minutes (campaigns/throttle.ts), which is far longer than any web
 // request lives. So the sending happens here instead: on the always-on host,
-// which is the same process that already holds the free tier's WhatsApp
+// which is the same process that already holds the QR tier's WhatsApp
 // sessions open (docs/Architecture.md §5).
 //
 // **All this does is ask.** Every decision — whose turn it is, whether they

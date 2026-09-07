@@ -5,8 +5,8 @@ browser, so this is where anything secret (WhatsApp tokens, the Razorpay key
 secret, database access) belongs.
 
 - `auth/`                  Login/session handling (NextAuth)
-- `whatsapp/business-api/`  Webhook + send endpoints for the paid tier
-- `whatsapp/qr-session/`    Start/stop/status endpoints for the free QR tier
+- `whatsapp/business-api/`  Webhook + send endpoints for the API tier
+- `whatsapp/qr-session/`    Start/stop/status endpoints for the QR tier
 - `billing/`               `subscription/` starts, changes and cancels a plan;
                            `webhook/` is where Razorpay tells us a payment
                            happened. The webhook is PUBLIC — Razorpay calls it,

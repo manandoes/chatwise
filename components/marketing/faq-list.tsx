@@ -31,7 +31,7 @@ export const FAQ_GROUPS: FaqGroup[] = [
       {
         question: "How long does setup take?",
         answer:
-          "On the free plan, minutes: pick your agent, answer the questions, scan a QR code with your phone. The Business API route takes longer because Meta has its own application and business-verification process to go through first.",
+          "On the QR connection, minutes: pick your agent, answer the questions, scan a QR code with your phone. The Business API route takes longer because Meta has its own application and business-verification process to go through first.",
       },
     ],
   },
@@ -71,12 +71,12 @@ export const FAQ_GROUPS: FaqGroup[] = [
       {
         question: "What's the difference between the QR connection and the Business API?",
         answer:
-          "The QR connection works the way WhatsApp Web does: you scan a code and your phone stays linked. It's free and instant, but it is an unofficial route. The Business API is Meta's official channel — more reliable and built for volume, but it charges per message and you have to apply for it.",
+          "Both need a paid plan; what differs is who else bills you. The QR connection works the way WhatsApp Web does: you scan a code, your phone stays linked, it's instant, and your monthly plan is the whole bill — but it is an unofficial route. The Business API is Meta's official channel, more reliable and built for volume, but you have to apply for it and Meta charges you per conversation on top of your plan, at their own rates.",
       },
       {
         question: "Could my number get banned?",
         answer:
-          "On the free QR connection, yes — that risk is real, and we would rather you hear it from us. Messaging people who never asked to hear from you, or messaging too often, is what puts a number at risk. That is why free-tier bulk sends are capped at 25 people at a time and spaced out, and why we show a warning before the first one. If you need to reach large lists, the Business API is the safe route.",
+          "On the QR connection, yes — that risk is real, and we would rather you hear it from us. Messaging people who never asked to hear from you, or messaging too often, is what puts a number at risk. That is why QR bulk sends are capped at 25 people at a time and spaced out, and why we show a warning before the first one. If you need to reach large lists, the Business API is the safe route.",
       },
       {
         question: "What happens if my connection drops?",
@@ -91,12 +91,12 @@ export const FAQ_GROUPS: FaqGroup[] = [
       {
         question: "How many people can I message at once?",
         answer:
-          "On the free plan, 25 at a time, sent with a gap between each rather than all at once. On the Business API plan, much larger lists, using templates Meta has approved. The 25 limit is enforced by the system itself, not just discouraged.",
+          "On the QR connection, 25 at a time, sent with a gap between each rather than all at once. On the Business API, much larger lists, using templates Meta has approved. The 25 limit is enforced by the system itself, not just discouraged.",
       },
       {
         question: "What happens when someone replies STOP?",
         answer:
-          "They are recorded as opted out and excluded from every future send automatically, on both plans. Outgoing bulk messages also carry a line telling people how to opt out.",
+          "They are recorded as opted out and excluded from every future send automatically, on both connections. Outgoing bulk messages also carry a line telling people how to opt out.",
       },
     ],
   },
@@ -106,7 +106,7 @@ export const FAQ_GROUPS: FaqGroup[] = [
       {
         question: "Can other ChatWise customers see my conversations?",
         answer:
-          "No. Each customer's data is separate, and on the free plan each WhatsApp session runs in its own isolated process — so another customer's session dropping, or their number being banned, cannot reach your account or your chats.",
+          "No. Each customer's data is separate, and on the QR connection each WhatsApp session runs in its own isolated process — so another customer's session dropping, or their number being banned, cannot reach your account or your chats.",
       },
       {
         question: "How are my WhatsApp credentials stored?",

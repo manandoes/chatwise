@@ -4,7 +4,7 @@ These rules apply to any AI (or human) writing code in this repo. When in doubt,
 
 ## 1. Stack Discipline
 
-- **Do** use: Next.js (App Router), TypeScript, Prisma + PostgreSQL, Tailwind + shadcn/ui, NextAuth.js, BullMQ + Redis, whatsapp-web.js (free tier only), WhatsApp Business Cloud API (paid tier only), Razorpay.
+- **Do** use: Next.js (App Router), TypeScript, Prisma + PostgreSQL, Tailwind + shadcn/ui, NextAuth.js, BullMQ + Redis, whatsapp-web.js (QR tier only), WhatsApp Business Cloud API (API tier only), Razorpay.
   - **Razorpay, not Stripe.** The product owner chose Razorpay on 2026-09-05,
     settling the open question in PRD.md §10. Every call to it lives in
     `lib/razorpay.ts` and nowhere else, so a future change of provider is one
@@ -25,7 +25,7 @@ These rules apply to any AI (or human) writing code in this repo. When in doubt,
 
 - **Never** hardcode API keys, tokens, database URLs, or any secret in source code — always read from environment variables, and add the variable (with a placeholder value and a comment) to `.env.example`.
 - **Never** expose a WhatsApp Business API token, the Razorpay key secret, or a database credential to the frontend/browser. Anything the browser needs must go through a server-side API route.
-- WhatsApp session data (QR-tier) and API credentials (paid tier) must be encrypted at rest in the database, not stored as plain text.
+- WhatsApp session data (QR-tier) and API credentials (API tier) must be encrypted at rest in the database, not stored as plain text.
 - Every dashboard/API route must check that the logged-in user actually owns the Business/AgentInstance/Conversation they're trying to read or modify — no trusting an ID from the request alone (prevents one customer from seeing another's data).
 
 ## 4. Error Handling
@@ -64,12 +64,12 @@ Per PRD.md §3.1, each account gets **exactly one bot type and exactly one conne
 
 Bulk outreach is the highest-risk feature in the app — getting it wrong can get a customer's WhatsApp number banned or expose them to legal penalties. These rules are firm:
 
-- **Enforce the free-tier 25-recipient cap in code** (PRD.md §7.1) — the send API route must reject any free-tier (QR) campaign with more than 25 recipients, and the UI must disable selecting more than 25. Never rely on the UI alone.
-- **Throttle free-tier sends** — space out the 25 messages with a delay between each (via the `campaign-sender` job), never fire them instantly. Do not remove or shorten this throttle for "speed."
-- **Show the mandatory free-tier warning** (PRD.md §7.2) and require explicit acknowledgment before the first send — do not let a free-tier bulk send proceed without it.
+- **Enforce the QR-tier 25-recipient cap in code** (PRD.md §7.1) — the send API route must reject any QR-tier (QR) campaign with more than 25 recipients, and the UI must disable selecting more than 25. Never rely on the UI alone.
+- **Throttle QR-tier sends** — space out the 25 messages with a delay between each (via the `campaign-sender` job), never fire them instantly. Do not remove or shorten this throttle for "speed."
+- **Show the mandatory QR-tier warning** (PRD.md §7.2) and require explicit acknowledgment before the first send — do not let a QR-tier bulk send proceed without it.
 - **Check opt-outs before every send** — any contact in the `OptOut` table (replied STOP / unsubscribed) must be automatically excluded. Never send to an opted-out contact, on any tier.
 - **Append an opt-out line** to outbound bulk messages if the template doesn't already contain one.
-- **Paid tier requires approved templates** — a paid-tier campaign can only send a `MessageTemplate` whose Meta approval status is approved. Block sends using unapproved templates.
+- **API tier requires approved templates** — an API-tier campaign can only send a `MessageTemplate` whose Meta approval status is approved. Block sends using unapproved templates.
 - **Don't invent compliance claims** — don't hardcode statements about what Meta "allows" as fact; where policy specifics are uncertain, flag as an open question (Rules.md §10) rather than guessing.
 - The 25-cap, throttle, warning, and opt-out checks are **safety features, not conveniences** — do not simplify or remove them to make the feature faster or easier to build.
 
@@ -77,7 +77,7 @@ Bulk outreach is the highest-risk feature in the app — getting it wrong can ge
 
 - Don't skip ahead to a later phase (see Phases.md) before the current phase's scope is done and working.
 - Don't silently change the data model (`prisma/schema.prisma`) without noting the change and its reason in Memory.md.
-- Don't remove or "simplify away" the per-user process isolation for the free/QR tier (Architecture.md §5) for the sake of convenience — this is a deliberate safety/scalability decision, not an accident.
+- Don't remove or "simplify away" the per-user process isolation for the QR tier (Architecture.md §5) for the sake of convenience — this is a deliberate safety/scalability decision, not an accident.
 - Don't invent pricing, plan limits, or legal/compliance claims about WhatsApp's API policies — flag these as open questions (see PRD.md §10) instead of guessing.
 - Don't commit `.env`, credentials, or any real customer data/exports to the repo.
 - Don't add analytics/tracking scripts, ads, or third-party trackers beyond what's explicitly requested.

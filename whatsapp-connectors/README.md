@@ -2,9 +2,9 @@
 
 Everything to do with actually talking to WhatsApp. Two ways in:
 
-- `business-api/`  The official WhatsApp Business Cloud API from Meta. Paid tier,
+- `business-api/`  The official WhatsApp Business Cloud API from Meta. API tier,
                    charged per message, reliable, no ban risk. (**Phase 6**)
-- `web-qr/`        The free tier: the customer scans a QR code with their phone,
+- `web-qr/`        The QR tier: the customer scans a QR code with their phone,
                    the way WhatsApp Web works. Each customer's session runs in its
                    own separate worker process so one customer's problem can never
                    affect anyone else's (docs/Architecture.md §5). (**Phase 5**)
@@ -21,15 +21,15 @@ allows should go through:
                      this so that none of them has to know which tier it is on —
                      the moment a feature writes `if (type === "QR")`, that
                      branch has to be repeated in every feature that sends.
-- `capabilities.ts`  The rules that genuinely differ — the 25-recipient free-tier
+- `capabilities.ts`  The rules that genuinely differ — the 25-recipient QR-tier
                      cap, throttling, whether templates need Meta's approval,
                      whether delivery receipts exist — as **data** rather than
                      behaviour, so a screen reads a value instead of branching.
                      It has no server-only imports, so the campaigns UI can read
                      the same cap the API route enforces.
 
-The one difference the interface does *not* hide is that the paid tier knows a
-message was sent and the free tier only knows it was accepted for sending. See
+The one difference the interface does *not* hide is that the API tier knows a
+message was sent and the QR tier only knows it was accepted for sending. See
 `SendOutcome` in `index.ts` — telling a customer "sent" when nobody knows yet
 would be exactly the stale status docs/Rules.md §4 forbids.
 

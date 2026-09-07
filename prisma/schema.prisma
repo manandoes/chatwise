@@ -151,10 +151,18 @@ enum BotType {
   INTERNAL
 }
 
+/// How an account is connected to WhatsApp.
+///
+/// Both tiers are paid; they differ in who the customer is and who else bills
+/// them. See whatsapp-connectors/capabilities.ts for what each one can do.
 enum ConnectionType {
-  /// Free tier — the customer scans a QR code, like WhatsApp Web.
+  /// For small businesses — the customer scans a QR code, like WhatsApp Web.
+  /// The platform subscription is the whole bill; nothing is charged per message.
   QR
-  /// Paid tier — the official WhatsApp Business Cloud API.
+  /// For larger businesses — the official WhatsApp Business Cloud API. The
+  /// platform subscription *plus* Meta's own per-conversation charges, billed by
+  /// Meta directly to the customer. We never see that money and never quote a
+  /// rate for it (docs/Rules.md §9).
   API
 }
 
@@ -235,7 +243,7 @@ model WhatsAppConnection {
   @@map("whatsapp_connections")
 }
 
-/// The saved WhatsApp Web session for a free-tier connection — what lets a
+/// The saved WhatsApp Web session for a QR-tier connection — what lets a
 /// customer stay connected without rescanning the QR code every time.
 ///
 /// This is effectively a key to that business's WhatsApp account, so it is
@@ -257,7 +265,7 @@ model WhatsAppSession {
   @@map("whatsapp_sessions")
 }
 
-/// The Meta credentials for a paid-tier connection.
+/// The Meta credentials for an API-tier connection.
 ///
 /// Every customer brings their **own** Meta app, so everything here belongs to
 /// that one customer — including the app secret. Nothing about Meta is
@@ -577,7 +585,7 @@ model Lead {
 //     restart and cannot be "sped up" by a retry loop.
 //   * `CampaignRecipient.status` is claimed atomically before a send, which is
 //     what stops the same person being messaged twice.
-//   * `Campaign.warningAcknowledgedAt` records that the free tier's mandatory
+//   * `Campaign.warningAcknowledgedAt` records that the QR tier's mandatory
 //     ban-risk warning was actually accepted (docs/PRD.md §7.2).
 //   * `OptOut` is checked when a campaign is built *and* again as each message
 //     goes out, because the two can be days apart.
@@ -599,7 +607,7 @@ enum CampaignStatus {
 /// Where one person's copy of a bulk message has got to.
 ///
 /// Not the same thing as the direction and author on a Message row: this
-/// tracks delivery, which only the paid tier can actually report on
+/// tracks delivery, which only the API tier can actually report on
 /// (`supportsDeliveryReceipts` in whatsapp-connectors/capabilities.ts).
 enum DeliveryStatus {
   /// Waiting for its turn in the throttle.
@@ -607,7 +615,7 @@ enum DeliveryStatus {
   /// Claimed by the sender. A row does not sit here long; if it does, a send
   /// was interrupted.
   SENDING
-  /// Handed to WhatsApp. On the free tier this is as much as is ever known.
+  /// Handed to WhatsApp. On the QR tier this is as much as is ever known.
   SENT
   /// Meta says it reached the handset.
   DELIVERED
@@ -621,7 +629,7 @@ enum DeliveryStatus {
   SKIPPED
 }
 
-/// Whether Meta has approved a template for use on the paid tier.
+/// Whether Meta has approved a template for use on the API tier.
 ///
 /// ChatWise cannot see inside a customer's Meta account, so this records what
 /// the customer told us. It is a pre-flight check that gives a clear error
@@ -635,8 +643,8 @@ enum TemplateApproval {
 
 /// A message a business saves to reuse.
 ///
-/// The two tiers mean genuinely different things by "template". On the free
-/// tier it is ordinary text we fill in and send. On the paid tier the words
+/// The two tiers mean genuinely different things by "template". On the QR
+/// tier it is ordinary text we fill in and send. On the API tier the words
 /// live at Meta under a name they approved, and `metaName`/`metaLanguage` are
 /// how we ask for them — `body` is then our copy of what it says, kept so the
 /// screen can show a preview and so the opt-out line can be checked.
@@ -652,7 +660,7 @@ model MessageTemplate {
   /// Which of the starter groups it came from, if any (docs/PRD.md §7.3).
   category String?
 
-  /// Paid tier only: the template's name and language as registered at Meta.
+  /// API tier only: the template's name and language as registered at Meta.
   metaName     String?
   metaLanguage String?
   approval     TemplateApproval @default(NOT_SUBMITTED)
@@ -684,8 +692,8 @@ model Campaign {
   templateId String?
   template   MessageTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
-  /// Paid-tier sends go out as an approved template, by name (docs/PRD.md §7.1).
-  /// Null on the free tier, where the text above is sent as it stands.
+  /// API-tier sends go out as an approved template, by name (docs/PRD.md §7.1).
+  /// Null on the QR tier, where the text above is sent as it stands.
   metaTemplateName     String?
   metaTemplateLanguage String?
 
@@ -694,11 +702,11 @@ model Campaign {
   tier   ConnectionType
   status CampaignStatus @default(DRAFT)
 
-  /// The gap between messages, in milliseconds. Zero on the paid tier.
+  /// The gap between messages, in milliseconds. Zero on the API tier.
   throttleMs Int @default(0)
 
-  /// When the free tier's mandatory ban-risk warning was accepted. Null on a
-  /// free-tier campaign means it must not send (docs/PRD.md §7.2).
+  /// When the QR tier's mandatory ban-risk warning was accepted. Null on a
+  /// QR-tier campaign means it must not send (docs/PRD.md §7.2).
   warningAcknowledgedAt DateTime?
 
   scheduledFor DateTime?
@@ -752,7 +760,7 @@ model CampaignRecipient {
   failureReason String?
 
   /// Meta's id for the sent message, which is what a delivery receipt names.
-  /// Null on the free tier, which reports nothing back.
+  /// Null on the QR tier, which reports nothing back.
   externalId String? @unique
 
   createdAt DateTime @default(now())
@@ -797,17 +805,27 @@ model OptOut {
 // on and what state its payment is in, because those are facts about *this*
 // account rather than pricing decisions.
 
-/// The four plans (see lib/plans.ts for what each one includes).
+/// The two plans, plus the state of being on neither (see lib/plans.ts).
+///
+/// **There is one plan per connection tier and nothing else.** The plan a
+/// business buys *is* the way it connects to WhatsApp — there is no ladder of
+/// sizes within a tier, so `ConnectionType` above and the two plans below are
+/// two views of the same choice. `lib/plans.ts` holds what each one includes.
 ///
 /// There is no "number of agents" here on purpose: an account runs one agent on
-/// one connection, so that is never a plan question (docs/PRD.md §4). Plans
-/// differ by volume, by which WhatsApp connection they allow, and by how much
-/// history the dashboard will show.
+/// one connection, so that is never a plan question (docs/PRD.md §4).
 enum PlanId {
-  FREE
-  STARTER
-  GROWTH
-  PRO
+  /// Not a plan anybody can buy — both plans are paid. This is an account with
+  /// no live subscription: where a new account starts, and where a cancellation
+  /// lands once the period already paid for runs out. It grants nothing
+  /// (lib/plans.ts → NO_SUBSCRIPTION_PLAN).
+  NONE
+  /// Small businesses, on the QR connection. The subscription is the whole
+  /// bill; nothing is charged per message.
+  SMALL_BUSINESS
+  /// Larger businesses, on the official Business API. The subscription plus
+  /// Meta's per-conversation charges, which Meta bills to the customer.
+  ENTERPRISE
 }
 
 /// Where a subscription stands, in our own words rather than Razorpay's.
@@ -817,7 +835,7 @@ enum PlanId {
 /// lib/subscription.ts translates theirs into these and treats anything it does
 /// not recognise as "not paid up" — the cautious direction to be wrong in.
 enum SubscriptionStatus {
-  /// Never subscribed. Everyone starts here, and the free plan needs nothing else.
+  /// Never subscribed. Everyone starts here, and cannot send until they pick a plan.
   NONE
   /// Started but the first payment hasn't gone through yet.
   INCOMPLETE
@@ -834,7 +852,7 @@ model Subscription {
   businessId String   @unique
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
-  plan   PlanId             @default(FREE)
+  plan   PlanId             @default(NONE)
   status SubscriptionStatus @default(NONE)
 
   /// Razorpay's own ids. Not secrets — they are useless without the API key —

@@ -1,14 +1,14 @@
 // The messages a business saves to reuse.
 //
 // A starter template (starter-templates.ts) is shipped wording anybody can
-// copy. A saved template is that business's own, and on the paid tier it is
+// copy. A saved template is that business's own, and on the API tier it is
 // also a claim about something at Meta: a name, a language, and whether Meta
 // approved it. ChatWise cannot see inside a customer's Meta account, so that
 // claim is theirs — the value of recording it is a clear error before a send
 // rather than a cryptic rejection during one (docs/Rules.md §8).
 //
-// One rule here is worth spelling out. On the free tier a missing opt-out line
-// is *appended* at send time (campaigns/opt-out.ts). On the paid tier it cannot
+// One rule here is worth spelling out. On the QR tier a missing opt-out line
+// is *appended* at send time (campaigns/opt-out.ts). On the API tier it cannot
 // be: the words that go out are the ones Meta approved, and adding to them
 // would send something different from what was reviewed. So a Meta template
 // whose text does not tell people how to stop is **refused when it is saved**,
@@ -45,7 +45,7 @@ function isApproval(value: string): value is ApprovalValue {
 export type TemplateInput = {
   name: string;
   body: string;
-  /** Paid tier: the name and language this is registered under at Meta. */
+  /** API tier: the name and language this is registered under at Meta. */
   metaName?: string | null;
   metaLanguage?: string | null;
   approval?: string | null;
@@ -69,7 +69,7 @@ export type TemplateCheck =
 /**
  * Checks a template before it is saved.
  *
- * `forMetaTemplates` is true on the paid tier, where the extra fields are the
+ * `forMetaTemplates` is true on the API tier, where the extra fields are the
  * whole point and the opt-out line cannot be added later.
  */
 export function checkTemplate(

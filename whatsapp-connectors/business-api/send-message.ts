@@ -88,7 +88,7 @@ export async function sendTextMessage({
 /**
  * Sends one of the customer's Meta-approved templates (Phase 12).
  *
- * This is how the paid tier does bulk outreach, and it is a genuinely different
+ * This is how the API tier does bulk outreach, and it is a genuinely different
  * thing from sending text. Meta will not let a business *start* a conversation
  * with free-form words: the message has to name a template they have already
  * reviewed, and the only part we get to vary is the values that fill its

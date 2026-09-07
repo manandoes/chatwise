@@ -80,10 +80,10 @@ export default function FeaturesPage() {
           headline="Reach your contacts, with the brakes built in"
           body="Send one message to many people, personalised per person, starting from a library of ready-made templates. The limits that keep your number safe are enforced by the system rather than left to your judgement in the moment."
           specifics={[
-            "Free plan: 25 recipients per send, spaced out, never a single blast",
-            "A warning you have to acknowledge before your first free-tier send",
+            "QR connection: 25 recipients per send, spaced out, never a single blast",
+            "A warning you have to acknowledge before your first QR-connection send",
             "Anyone who replied STOP is excluded automatically, on every plan",
-            "Business API plan: large lists, using templates Meta has approved",
+            "Business API: large lists, using templates Meta has approved",
             "Delivery, read and reply tracked per campaign",
           ]}
           flipped
@@ -97,7 +97,7 @@ export default function FeaturesPage() {
           specifics={[
             "Connected, reconnecting, or disconnected and needing you",
             "Reconnects on its own where it can",
-            "On the free plan, your session runs in its own isolated process",
+            "On the QR connection, your session runs in its own isolated process",
           ]}
         />
 

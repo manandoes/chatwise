@@ -10,7 +10,7 @@
 //
 // What it is genuinely for is stopping a mistake before it is made:
 //
-//   * the send button is disabled past the free tier's 25-recipient cap,
+//   * the send button is disabled past the QR tier's 25-recipient cap,
 //   * people who unsubscribed are shown, greyed, and cannot be selected,
 //   * the ban-risk warning has to be ticked before anything can go (§7.2),
 //   * the opt-out line that will be appended is shown, so nobody is surprised,
@@ -43,9 +43,8 @@ import { capabilitiesFor } from "@/whatsapp-connectors/capabilities";
 /**
  * The warning docs/PRD.md §7.2 requires, close to word for word.
  *
- * It is not softened, and it is not shown once and remembered — a free-tier
- * send needs it accepted every time, because every send carries the risk
- * afresh.
+ * It is not softened, and it is not shown once and remembered — a QR-tier send
+ * needs it accepted every time, because every send carries the risk afresh.
  */
 const BAN_RISK_WARNING =
   "You're sending from a WhatsApp Web connection. Sending to people who haven't opted in, or sending too often, can get your WhatsApp number banned by WhatsApp. Only message contacts who expect to hear from you. For safe, large-scale outreach, upgrade to the WhatsApp Business API.";
@@ -75,7 +74,7 @@ export function CampaignBuilder({
   tier: "QR" | "API";
   contacts: BuilderContact[];
   templates: BuilderTemplate[];
-  /** The line appended to free-tier messages that don't already say it. */
+  /** The line appended to QR-tier messages that don't already say it. */
   optOutLine: string;
 }) {
   const router = useRouter();
@@ -94,7 +93,7 @@ export function CampaignBuilder({
   const overCap = cap !== null && chosen.size > cap;
   const unfilled = useMemo(() => unfilledPlaceholders(body), [body]);
 
-  // The free tier spaces its messages out (campaigns/throttle.ts). Saying so
+  // The QR tier spaces its messages out (campaigns/throttle.ts). Saying so
   // beforehand is the difference between a slow send and a broken one.
   const minutes =
     capabilities.requiresBulkThrottle && chosen.size > 1

@@ -36,7 +36,7 @@ export async function requireApiConnection(): Promise<Found | Refused> {
     return {
       ok: false,
       response: apiError(
-        "Your account uses the free QR connection, not the WhatsApp Business API.",
+        "Your account uses the QR connection, not the WhatsApp Business API.",
         "NOT_AUTHORIZED",
         409,
       ),

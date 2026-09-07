@@ -13,32 +13,54 @@ questions about their business, connect WhatsApp, and it goes live.
 2. A short setup wizard asks four things: **which agent** they want, **how to
    connect WhatsApp**, **what their business does**, and **how the agent should
    behave**.
-3. They connect their WhatsApp number, either by scanning a QR code (free) or by
-   entering official WhatsApp Business API details (paid).
+3. They connect their WhatsApp number, either by scanning a QR code or by
+   entering official WhatsApp Business API details.
 4. From then on, the agent answers their customers automatically, and everything
    shows up in their dashboard.
 
 ## Two ways to connect WhatsApp
 
+**Both tiers are paid.** Every account needs a monthly ChatWise subscription
+whichever way it connects. What differs is who the business is — and whether
+anyone else bills them.
+
 |  | **QR connection** | **Official API** |
 |---|---|---|
+| Who it's for | Small businesses | Larger businesses |
 | How it connects | Scan a QR code, like WhatsApp Web | Official WhatsApp Business API from Meta |
-| Which plans | Every plan, including Free | Growth and Pro |
+| What it costs | The ChatWise subscription, and nothing else | The ChatWise subscription **plus Meta's per-conversation charges**, billed by Meta |
+| Its plan | **Small Business**, ₹999 a month | **Enterprise**, ₹1,499 a month |
 | Bulk messages | Up to **25 recipients** per send, spaced out | Large lists, using Meta-approved templates |
 | Risk | Unofficial channel — careless sending can get a number banned | Officially sanctioned |
 
+On the API tier, Meta bills the customer directly against their own Meta
+account, at Meta's rates for their country and conversation type. That money
+never passes through ChatWise, and nothing in this repo quotes a figure for it
+(docs/Rules.md §9) — the screens say the charge exists and point at Meta.
+
 ## What it costs
 
-| | **Free** | **Starter** | **Growth** | **Pro** |
-|---|---|---|---|---|
-| Per month | ₹0 | ₹999 | ₹1,499 | ₹2,499 |
-| Messages sent | 300 | 2,000 | 10,000 | 30,000 |
-| Campaigns | 1 a month | 4 a month | 20 a month | Unlimited |
-| Knowledge answers | 20 | 50 | 100 | 100 |
-| Analytics history | 7 days | 30 days | Everything | Everything |
-| Official WhatsApp API | — | — | ✓ | ✓ |
+**There is one plan per connection tier, and nothing else** — no ladder of
+sizes. The plan a business buys *is* the way it connects to WhatsApp.
 
-Every plan runs one agent on one number, so nothing is priced per seat or per
+| | **Small Business** | **Enterprise** |
+|---|---|---|
+| Connection | QR code | Official WhatsApp Business API |
+| Per month | ₹999 | ₹1,499 |
+| Meta's per-conversation charge | None | Billed to you by Meta, at Meta's rates |
+| Messages sent | 2,000 | 10,000 |
+| Campaigns | 4 a month, up to 25 people each | Unlimited, no recipient cap |
+| Saved templates | 10 | Unlimited |
+| Knowledge answers | 50 | 100 |
+| Analytics history | 30 days | Everything |
+| Support | Email | Priority |
+
+There is no free plan. An account with no live subscription — a new signup that
+hasn't paid, or one whose cancellation has run its course — keeps everything it
+has and can read it, but cannot send. That state is the `NONE` value in the
+database; nothing sells it or shows it as a plan.
+
+Both plans run one agent on one number, so nothing is priced per seat or per
 bot. Payment goes through **Razorpay**, on their own hosted page — no card
 details ever reach ChatWise.
 
@@ -120,9 +142,9 @@ ChatWise is **two processes**, not a separate frontend and backend:
 | Process | What it is | Command |
 |---|---|---|
 | **The app** | Next.js — the website, the dashboard *and* every API route, in one process. There is no separate backend server. | `npm run dev` |
-| **The WhatsApp worker** | An always-on Node process that drives free-tier (QR) WhatsApp sessions and sends campaigns. Talks to the app through Redis, never over HTTP. | `npm run whatsapp-worker` |
+| **The WhatsApp worker** | An always-on Node process that drives QR-tier (QR) WhatsApp sessions and sends campaigns. Talks to the app through Redis, never over HTTP. | `npm run whatsapp-worker` |
 
-The app on its own is enough for everything except the free/QR WhatsApp tier and
+The app on its own is enough for everything except the QR WhatsApp tier and
 campaign sending. Start the worker when you need those.
 
 Both processes read the same `.env`, and both need `GEMINI_API_KEY` — the worker
@@ -228,13 +250,40 @@ build command and it runs `prisma generate` first. Set every variable from
   `AUTH_TRUST_HOST="true"`.
 
 **3. The WhatsApp worker — not Vercel.** It is a long-lived process that drives a
-real Chrome, so it needs a host that runs containers or plain VMs (Railway,
-Render, Fly, a VPS). Give it the same `.env` values as the app plus `CHROME_PATH`
-and `WHATSAPP_SESSION_PATH` on a **persistent disk** — that folder is what keeps
-customers logged into WhatsApp across restarts. Start it with
-`npm run whatsapp-worker`.
+real Chrome, so it needs a host that runs containers or plain VMs (a GCE VM,
+Railway, Render, Fly, a VPS). `Dockerfile.worker` builds it — Debian +
+Chromium, no HTTP port, since the worker only makes outbound connections. Give
+it the same `.env` values as the app plus `CHROME_PATH=/usr/bin/chromium` (set
+by the image already) and `WHATSAPP_SESSION_PATH`.
 
-Skip this box entirely if you only sell the paid/Business-API tier: that tier is
+That path does **not** need a persistent disk: whatsapp-web.js's `RemoteAuth`
+keeps the real session encrypted in Postgres
+(`whatsapp-connectors/web-qr/session-store.ts`), and re-populates the local
+path from there on startup. A restarted or replaced container does not force
+anyone to rescan a QR code.
+
+Run **exactly one** instance — the manager tracks live sessions in memory
+(`whatsapp-connectors/web-qr/session-manager.ts`), so a second instance
+consuming the same command queue could act on a session it doesn't hold.
+Scale the box vertically instead: each connected customer is a running
+Chromium, at roughly 400–600 MB.
+
+On a GCE VM, `scripts/deploy-worker-gcp.sh` does the whole thing end to end —
+creates the VM if it doesn't exist yet, ships the source and *only* the four
+env vars the worker needs over SSH (never through instance metadata, which
+isn't access-controlled the way a file on the instance's own disk is), builds
+`Dockerfile.worker` on it, and runs the container with
+`--restart unless-stopped`. It's the same command for the first deploy and
+every redeploy after:
+
+```bash
+./scripts/deploy-worker-gcp.sh
+```
+
+Elsewhere (Railway, Render, Fly, a VPS), the same image works — build
+`Dockerfile.worker` and run it with `--restart unless-stopped --env-file .env`.
+
+Skip this box entirely if you only sell the Business-API tier: that tier is
 webhooks, and the app serves those itself.
 
 **4. Redis.** Both boxes point `REDIS_URL` at the same one (Upstash, Railway, or
@@ -280,10 +329,10 @@ Four things are needed to finish that off, and none of them is code:
 
 1. A **`GEMINI_API_KEY`** — the worker host needs it too, not just the web app.
 2. A **connected WhatsApp number**, on either tier.
-3. **Razorpay keys and one plan per paid tier**, created in the Razorpay
-   dashboard at ₹999, ₹1,499 and ₹2,499. Leave them out and the app runs
-   perfectly well with payments off — nothing is limited, and the billing screen
-   says so.
+3. **Razorpay keys and two Razorpay plans**, created in the Razorpay dashboard
+   at ₹999 (Small Business) and ₹1,499 (Enterprise). Both plans are paid, so
+   both need one. Leave them out and the app runs perfectly well with payments
+   off — nothing is limited, and the billing screen says so.
 4. An **email service**, so "forgot password" can exist at all.
 
 See [docs/Memory.md](docs/Memory.md) for exactly where things stand, including

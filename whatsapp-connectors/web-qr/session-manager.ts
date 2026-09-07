@@ -1,4 +1,4 @@
-// The supervisor for every free-tier WhatsApp session on this machine.
+// The supervisor for every QR-tier WhatsApp session on this machine.
 //
 // This is the always-on process (docs/Architecture.md §6). It:
 //
@@ -130,7 +130,7 @@ async function handleWorkerEvent(event: SessionEvent) {
     }
 
     case "inbound": {
-      // The free tier's half of Phase 7. The paid tier reaches the same router
+      // The QR tier's half of Phase 7. The API tier reaches the same router
       // from its webhook; this is the same message taking a different road.
       //
       // It runs here, in the always-on manager, rather than in the web app,
@@ -318,7 +318,7 @@ console.log(
 
 // Bulk sends are spaced over many minutes (docs/Rules.md §8), so they cannot
 // run inside a web request. They run here, on the one host that is always up.
-// Note this is not specific to the free tier: a paid-tier campaign needs a
+// Note this is not specific to the QR tier: an API-tier campaign needs a
 // long-lived process just as much, it simply talks to Meta instead of to a
 // browser session.
 startCampaignSender();

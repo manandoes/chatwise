@@ -14,7 +14,7 @@ import "server-only";
 
 import { db } from "./db.ts";
 import {
-  FREE_PLAN,
+  NO_SUBSCRIPTION_PLAN,
   PLANS,
   planFor,
   type Plan,
@@ -56,9 +56,9 @@ export type AccountPlan = {
   /**
    * Whether payments are switched on for this installation at all.
    *
-   * When false, **nothing is gated**. Holding someone to the free plan's limits
-   * when there is no way to pay for a bigger one would just be a bug wearing a
-   * business rule's clothes.
+   * When false, **nothing is gated**. Every plan is paid, so with no way to pay
+   * an ungated installation is the only usable one — holding an account to a
+   * plan it cannot buy would just be a bug wearing a business rule's clothes.
    */
   billingIsLive: boolean;
 };
@@ -83,11 +83,11 @@ export async function readAccountPlan(
   const status = (row?.status ?? "NONE") as SubscriptionStatusValue;
 
   // Everything above this line is a fact. This is the judgement: an account is
-  // on the plan it is paying for, and on the free plan otherwise.
+  // on the plan it is paying for, and on no plan at all otherwise.
   const inForce =
     !billingIsLive || STATUSES_THAT_ENTITLE.includes(status)
       ? subscribedPlan
-      : FREE_PLAN;
+      : NO_SUBSCRIPTION_PLAN;
 
   return {
     plan: billingIsLive ? inForce : subscribedPlan,
@@ -105,9 +105,9 @@ export async function readAccountPlan(
 /**
  * The first day of the current calendar month, in UTC.
  *
- * Used to count usage for accounts with no paid period to count against — a
- * free account still needs a month to measure against, and "since the 1st" is
- * what anybody would assume.
+ * Used to count usage for accounts with no paid period to count against — an
+ * account between subscriptions still needs a month to measure against, and
+ * "since the 1st" is what anybody would assume.
  */
 export function startOfThisMonth(now: Date = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
@@ -153,10 +153,10 @@ export async function startSubscription({
 }): Promise<StartResult> {
   const plan = planFor(planId);
 
-  if (plan.id === "FREE") {
+  if (plan.id === "NONE") {
     return {
       ok: false,
-      message: "The free plan doesn't need paying for — you're already on it.",
+      message: "That isn't a plan you can buy — pick Small Business or Enterprise.",
     };
   }
 
@@ -308,7 +308,7 @@ export async function cancelPlan(businessId: string): Promise<CancelResult> {
 
   const updated = await db.subscription.update({
     where: { businessId },
-    data: { cancelAtPeriodEnd: true, pendingPlan: "FREE" },
+    data: { cancelAtPeriodEnd: true, pendingPlan: "NONE" },
   });
 
   return { ok: true, endsAt: updated.currentPeriodEnd };
@@ -397,10 +397,10 @@ export async function applySubscriptionEvent(
   const periodStart = fromUnixSeconds(entity.current_start);
   const periodEnd = fromUnixSeconds(entity.current_end);
 
-  // A cancelled or finished subscription drops the account back to free. Any
+  // A cancelled or finished subscription leaves the account on no plan. Any
   // other state keeps whichever plan Razorpay says is being charged for.
   const planId: PlanIdValue =
-    status === "CANCELED" ? "FREE" : (plan?.id ?? existing?.plan ?? "FREE");
+    status === "CANCELED" ? "NONE" : (plan?.id ?? existing?.plan ?? "NONE");
 
   await db.subscription.upsert({
     where: { businessId },

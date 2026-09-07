@@ -64,7 +64,7 @@ export async function POST(request: Request) {
         return apiError(outcome.message, "UNEXPECTED_ERROR", 503);
 
       default:
-        // "queued" belongs to the free tier, which sends through a worker.
+        // "queued" belongs to the QR tier, which sends through a worker.
         // This tier calls Meta directly, so it can never land here.
         return apiError(
           "That message couldn't be sent.",

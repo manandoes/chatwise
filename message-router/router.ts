@@ -1,7 +1,7 @@
 // Where every inbound WhatsApp message goes.
 //
 // There are two very different ways a message reaches ChatWise — Meta posting
-// to a webhook, and a free-tier worker process noticing one on a phone — and
+// to a webhook, and a QR-tier worker process noticing one on a phone — and
 // exactly one thing that happens next. That thing is this file. Both connectors
 // call `routeInboundMessage` and neither knows what an agent is; this file
 // knows nothing about signatures, browsers or queues.

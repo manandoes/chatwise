@@ -6,13 +6,18 @@
 // card: starting a plan opens a payment page, moving up takes effect straight
 // away, and moving down waits until the month already paid for has run out.
 // Somebody clicking should not be surprised by any of those (docs/Rules.md §7).
+//
+// Every plan shown here is paid, and the note under each price says whether it
+// is the whole bill — on the API plans Meta charges per conversation on top
+// (lib/plans.ts → billingNote). `currentPlanId` can still be the not-subscribed
+// state, which simply matches no card: everything then reads as a first choice.
 
 import { ArrowRight, Check, LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { formatRupees, type Plan, type PlanIdValue } from "@/lib/plans";
+import { billingNote, formatRupees, type Plan, type PlanIdValue } from "@/lib/plans";
 
 export function PlanPicker({
   plans,
@@ -74,11 +79,10 @@ export function PlanPicker({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2">
         {plans.map((plan) => {
           const isCurrent = plan.id === currentPlanId;
           const isUnavailable = unavailablePlanIds.includes(plan.id);
-          const isFree = plan.monthlyPriceInRupees === 0;
           const isUpgrade = plan.monthlyPriceInRupees > currentPrice;
 
           return (
@@ -101,11 +105,9 @@ export function PlanPicker({
 
               <p className="mt-3 text-h3 font-bold tracking-tight text-text-primary">
                 {formatRupees(plan.monthlyPriceInRupees)}
-                {!isFree && (
-                  <span className="ml-1 text-small font-normal text-text-secondary">
-                    a month
-                  </span>
-                )}
+              </p>
+              <p className="mt-1 text-pretty text-xs leading-relaxed text-text-secondary">
+                {billingNote(plan)}
               </p>
 
               <p className="mt-3 text-pretty text-small leading-relaxed text-text-secondary">
@@ -130,10 +132,6 @@ export function PlanPicker({
                 {isCurrent ? (
                   <p className="text-small text-text-secondary">
                     You&rsquo;re on this plan.
-                  </p>
-                ) : isFree ? (
-                  <p className="text-small text-text-secondary">
-                    Cancel your plan to move back to Free.
                   </p>
                 ) : isUnavailable ? (
                   <p className="text-small text-text-secondary">
@@ -160,7 +158,7 @@ export function PlanPicker({
                 )}
               </div>
 
-              {!isCurrent && !isFree && !isUnavailable && hasSubscription && (
+              {!isCurrent && !isUnavailable && hasSubscription && (
                 <p className="mt-2 text-xs leading-relaxed text-text-secondary">
                   {isUpgrade
                     ? "Takes effect immediately. Razorpay adjusts your next invoice."

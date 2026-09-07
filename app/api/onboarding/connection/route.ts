@@ -1,6 +1,6 @@
 // Setup Step B — how this account connects to WhatsApp.
 //
-// Either the free QR connection or the official Business API, never both
+// Either the QR connection or the official Business API, never both
 // (docs/PRD.md §3.1). One row per business, enforced by a unique index.
 
 import { apiError, unexpectedError } from "@/lib/api-response";

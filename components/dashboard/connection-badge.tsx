@@ -37,7 +37,7 @@ export function ConnectionBadge({
       </p>
 
       <p className="mt-1 text-text-secondary text-[0.6875rem]">
-        {connection.type === "QR" ? "Free — QR connection" : "Business API"}
+        {connection.type === "QR" ? "QR connection" : "Business API"}
       </p>
     </Link>
   );

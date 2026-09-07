@@ -18,9 +18,11 @@ import { formatDate } from "@/lib/format-when";
 import { getOnboardingState } from "@/lib/onboarding";
 import {
   PLANS,
+  billingNote,
   formatLimit,
   formatRupees,
   invoiceStatusLabel,
+  isPaidPlan,
   subscriptionStatusLabel,
   type PlanIdValue,
 } from "@/lib/plans";
@@ -41,13 +43,18 @@ export default async function BillingPage() {
   ]);
 
   // A plan with no Razorpay plan id set up cannot be bought, however much
-  // somebody wants to. Better to say so than to show a button that fails.
+  // somebody wants to. Better to say so than to show a button that fails. Every
+  // plan is paid, so every one of them needs an id.
   const unavailablePlanIds = PLANS.filter(
-    (plan) =>
-      plan.monthlyPriceInRupees > 0 && !razorpayPlanId(plan.razorpayPlanIdEnvVar),
+    (plan) => !razorpayPlanId(plan.razorpayPlanIdEnvVar),
   ).map((plan) => plan.id as PlanIdValue);
 
   const renewsOn = account.periodEnd ? formatDate(account.periodEnd) : null;
+
+  // Every plan is paid, so an account can be on none — before it has ever paid,
+  // or once a cancellation has run its course. Its limits are all zero, which is
+  // true but reads as "you've used everything" unless the screen says otherwise.
+  const onAPlan = isPaidPlan(account.plan);
 
   return (
     <div className="space-y-8">
@@ -99,9 +106,14 @@ export default async function BillingPage() {
               </p>
               <p className="mt-1 text-h3 font-semibold text-text-primary">
                 {account.plan.monthlyPriceInRupees === 0
-                  ? formatRupees(0)
+                  ? "Nothing to pay"
                   : `${formatRupees(account.plan.monthlyPriceInRupees)} a month`}
               </p>
+              {account.plan.monthlyPriceInRupees > 0 && (
+                <p className="mt-1 max-w-[28ch] text-pretty text-xs leading-relaxed text-text-secondary">
+                  {billingNote(account.plan)}
+                </p>
+              )}
             </div>
           </div>
 
@@ -117,8 +129,9 @@ export default async function BillingPage() {
             {account.cancelAtPeriodEnd && (
               <p className="text-warning">
                 Cancelled. You keep everything until{" "}
-                {renewsOn ?? "the end of the period you've paid for"}, then the
-                account moves to Free.
+                {renewsOn ?? "the end of the period you've paid for"}, then
+                sending stops until you pick a plan again. Your conversations,
+                leads and knowledge base stay where they are.
               </p>
             )}
 
@@ -161,26 +174,38 @@ export default async function BillingPage() {
           <Stat
             label="Messages sent"
             value={usage.messages.used.toLocaleString("en-IN")}
-            hint={`of ${formatLimit(usage.messages.limit)} on ${usage.plan.name}`}
+            hint={
+              onAPlan
+                ? `of ${formatLimit(usage.messages.limit)} on ${usage.plan.name}`
+                : "Pick a plan to start sending"
+            }
           />
           <Stat
             label="Campaigns"
             value={usage.campaigns.used.toLocaleString("en-IN")}
-            hint={`of ${formatLimit(usage.campaigns.limit)} this month`}
+            hint={
+              onAPlan
+                ? `of ${formatLimit(usage.campaigns.limit)} this month`
+                : undefined
+            }
           />
           <Stat
             label="Saved templates"
             value={usage.templates.used.toLocaleString("en-IN")}
-            hint={`of ${formatLimit(usage.templates.limit)}`}
+            hint={onAPlan ? `of ${formatLimit(usage.templates.limit)}` : undefined}
           />
           <Stat
             label="Knowledge answers"
             value={usage.knowledgeEntries.used.toLocaleString("en-IN")}
-            hint={`of ${formatLimit(usage.knowledgeEntries.limit)}`}
+            hint={
+              onAPlan
+                ? `of ${formatLimit(usage.knowledgeEntries.limit)}`
+                : undefined
+            }
           />
         </div>
 
-        {usage.messages.limit !== null && (
+        {onAPlan && usage.messages.limit !== null && (
           <div className="rounded-lg border border-border bg-surface p-5">
             <Bar
               label="Messages sent this period"
@@ -201,10 +226,11 @@ export default async function BillingPage() {
         <div>
           <h2 className="text-h3 font-semibold text-text-primary">Plans</h2>
           <p className="mt-1 max-w-[68ch] text-pretty text-small leading-relaxed text-text-secondary">
-            Every plan runs one agent on one WhatsApp number — that never
-            changes. What changes is how much you can send, how far back your
-            history goes, and whether you can use the official WhatsApp Business
-            API.
+            Two plans, one for each way of connecting to WhatsApp — the plan you
+            buy is the connection you get. Both run one agent on one WhatsApp
+            number; what changes is how much you can send, how far back your
+            history goes, and whether you use the official Business API, where
+            Meta charges you per conversation on top.
           </p>
         </div>
 

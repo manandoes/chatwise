@@ -39,9 +39,10 @@ export async function POST(request: Request) {
       return apiError(budget.message, "RATE_LIMITED", 429);
     }
 
-    // The official WhatsApp Business API is part of the Growth plan
-    // (lib/plans.ts). Checked here rather than in the browser, because this is
-    // the point where the connection actually starts working.
+    // The official WhatsApp Business API *is* the Enterprise plan (lib/plans.ts)
+    // — the two plans are the two connection tiers. Checked here rather than in
+    // the browser, because this is the point where the connection actually
+    // starts working.
     const allowed = await checkApiConnectionAllowed(found.businessId);
 
     if (!allowed.ok) {

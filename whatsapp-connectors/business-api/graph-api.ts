@@ -1,6 +1,6 @@
 // Talking to Meta's Graph API.
 //
-// Unlike the free tier, this needs no browser and no worker process — it is
+// Unlike the QR tier, this needs no browser and no worker process — it is
 // ordinary HTTPS calls, so it runs happily inside the web app.
 //
 // Everything here is server-side. An access token must never reach the browser

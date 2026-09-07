@@ -28,7 +28,7 @@ export function CtaBand({
 
         <div className="mt-9 flex flex-col justify-center gap-3 sm:flex-row">
           <Button asChild size="lg">
-            <Link href="/signup">Get started free</Link>
+            <Link href="/signup">Get started</Link>
           </Button>
           <Button asChild variant="outline" size="lg">
             <Link href={secondary.href}>{secondary.label}</Link>

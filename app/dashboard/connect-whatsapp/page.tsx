@@ -1,8 +1,9 @@
 // Connect WhatsApp.
 //
-// An account is either free-tier (scan a QR code) or paid-tier (the official
-// Business API), never both (docs/PRD.md §3.1) — so this screen shows whichever
-// applies rather than offering a choice.
+// An account is either on the QR tier (scan a QR code) or the API tier (the
+// official Business API), never both (docs/PRD.md §3.1) — so this screen shows
+// whichever applies rather than offering a choice. Both are paid; the API tier
+// is the one that also bills the customer at Meta.
 
 import { headers } from "next/headers";
 import type { Metadata } from "next";

@@ -10,9 +10,14 @@
 // when a plan changes.
 //
 // One rule governs the whole file: **when payments are not switched on for this
-// installation, nothing is limited.** Holding an account to the free plan's
-// numbers when there is no way to pay for a bigger one would be a bug wearing a
-// business rule's clothes.
+// installation, nothing is limited.** Every plan is paid, so an installation
+// with no way to pay has no plan anybody could be on; gating it would be a bug
+// wearing a business rule's clothes.
+//
+// Note that none of these limits is Meta's. On the Business API tier Meta bills
+// the customer per conversation, separately and directly — an account can be
+// well inside every number here and still owe Meta money. We do not count,
+// display or guess at that (whatsapp-connectors/capabilities.ts).
 
 import "server-only";
 
@@ -217,8 +222,9 @@ export async function checkKnowledgeQuota(
 /**
  * May this account connect through the official WhatsApp Business API?
  *
- * The one capability difference between the plans, rather than a matter of how
- * much (docs/PRD.md §7.1).
+ * The difference between the two plans, rather than a matter of how much
+ * (docs/PRD.md §7.1) — there is one plan per connection tier, so this asks
+ * which of the two the account bought.
  */
 export async function checkApiConnectionAllowed(
   businessId: string,
@@ -231,7 +237,7 @@ export async function checkApiConnectionAllowed(
   return {
     ok: false,
     message:
-      "The official WhatsApp Business API is part of the Growth plan. Upgrade in Billing, or connect by scanning a QR code instead.",
+      "The official WhatsApp Business API is the Enterprise plan. Move to it in Billing — Meta then charges you per conversation on top — or carry on with the QR connection, which has no per-message cost.",
   };
 }
 

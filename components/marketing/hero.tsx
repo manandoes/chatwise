@@ -26,16 +26,16 @@ export function Hero() {
 
           <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
             <Button asChild size="lg">
-              <Link href="/signup">Get started free</Link>
+              <Link href="/signup">Get started</Link>
             </Button>
             <Button asChild variant="outline" size="lg">
               <Link href="/pricing">See pricing</Link>
             </Button>
           </div>
 
-          <p className="mt-5 text-small text-text-secondary">
-            Free tier connects by scanning a QR code — no Meta application, no
-            per-message fee.
+          <p className="mt-5 text-pretty text-small text-text-secondary">
+            Small businesses connect by scanning a QR code — no Meta
+            application, and no per-message fee on top of your plan.
           </p>
         </div>
 

@@ -67,9 +67,9 @@ export function CancelSubscriptionButton({
     <div className="space-y-3">
       <p className="max-w-[56ch] text-pretty text-small leading-relaxed text-text-primary">
         Nothing switches off today. You keep everything until{" "}
-        {endsOn ?? "the end of the month you've paid for"}, and then the account
-        moves to the Free plan. Your conversations, leads and knowledge base all
-        stay where they are.
+        {endsOn ?? "the end of the month you've paid for"}, and then your agent
+        stops sending until you pick a plan again. Your conversations, leads and
+        knowledge base all stay where they are.
       </p>
 
       <div className="flex flex-wrap gap-3">

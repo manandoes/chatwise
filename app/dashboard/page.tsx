@@ -137,8 +137,8 @@ export default async function DashboardPage() {
             <CardTitle className="text-h3">WhatsApp connection</CardTitle>
             <CardDescription>
               {connection?.type === "QR"
-                ? "Free — connected by scanning a QR code."
-                : "Official WhatsApp Business API."}
+                ? "Connected by scanning a QR code. No per-message cost."
+                : "Official WhatsApp Business API. Meta charges per conversation."}
             </CardDescription>
           </CardHeader>
 

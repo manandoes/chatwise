@@ -3,12 +3,12 @@
 // This is the file docs/Rules.md §8 is about. Everything it refuses to do is
 // deliberate, and none of it is a convenience that can be traded away:
 //
-//   * **The 25-recipient cap on the free tier is enforced here**, from
+//   * **The 25-recipient cap on the QR tier is enforced here**, from
 //     `capabilitiesFor(tier).maxBulkRecipients`, not from a number typed into
 //     this file. The screen disables the button too; that is the second lock,
 //     not the first.
 //   * **The mandatory ban-risk warning must have been accepted** before a
-//     free-tier campaign can be scheduled (docs/PRD.md §7.2).
+//     QR-tier campaign can be scheduled (docs/PRD.md §7.2).
 //   * **Opt-outs are checked twice** — when the list is built, and again as
 //     each message comes due, because those can be days apart.
 //   * **Every message carries an opt-out line.**
@@ -51,7 +51,7 @@ export type NewCampaign = {
   conversationIds: string[];
   /** Which saved template this started from, if any. */
   templateId?: string | null;
-  /** Set by the free tier's warning checkbox (docs/PRD.md §7.2). */
+  /** Set by the QR tier's warning checkbox (docs/PRD.md §7.2). */
   warningAcknowledged?: boolean;
   /** When to start. Null or past means now. */
   scheduledFor?: Date | null;
@@ -178,7 +178,7 @@ export async function buildCampaign(input: NewCampaign): Promise<BuildResult> {
   if (cap !== null && contacts.length > cap) {
     return {
       ok: false,
-      message: `The free connection sends to at most ${cap} people at a time. You've chosen ${contacts.length}.`,
+      message: `The QR connection sends to at most ${cap} people at a time. You've chosen ${contacts.length}.`,
       field: "recipients",
     };
   }
@@ -203,7 +203,7 @@ export async function buildCampaign(input: NewCampaign): Promise<BuildResult> {
 
   // A campaign is the one thing that can spend a month's messages in a minute,
   // so it is checked against the whole list rather than one at a time. The 25
-  // people the free connection allows and the messages the *plan* allows are
+  // people the QR connection allows and the messages the *plan* allows are
   // two different limits, and both apply (docs/Rules.md §8).
   const messageQuota = await checkMessageQuota(input.businessId, sending.length);
 
@@ -224,7 +224,7 @@ export async function buildCampaign(input: NewCampaign): Promise<BuildResult> {
     });
   }
 
-  // The paid tier starts conversations with a template Meta has approved, and
+  // The API tier starts conversations with a template Meta has approved, and
   // nothing else (docs/PRD.md §7.1). Refusing here gives a clear reason; Meta
   // would refuse it anyway, less helpfully.
   if (capabilities.requiresApprovedTemplates) {
@@ -248,7 +248,7 @@ export async function buildCampaign(input: NewCampaign): Promise<BuildResult> {
   }
 
   // Every bulk message says how to stop receiving them (docs/Rules.md §8). On
-  // the paid tier the words belong to the approved template and cannot be added
+  // the API tier the words belong to the approved template and cannot be added
   // to here — that line is checked when the template is saved instead.
   const finalBody = capabilities.requiresApprovedTemplates
     ? body
@@ -511,9 +511,9 @@ async function markFailed(id: string, reason: string) {
 /**
  * Records what Meta says became of one sent message.
  *
- * Only the paid tier ever calls this — the free connection reports nothing
+ * Only the API tier ever calls this — the QR connection reports nothing
  * back, which is why `supportsDeliveryReceipts` exists in
- * whatsapp-connectors/capabilities.ts and why a free-tier campaign honestly
+ * whatsapp-connectors/capabilities.ts and why a QR-tier campaign honestly
  * shows "sent" and stops there.
  *
  * A reply outranks a read, a read outranks a delivery, and a delivery outranks

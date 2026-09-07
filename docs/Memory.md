@@ -9,13 +9,14 @@
 - **Current phase:** Phase 14 - Polish, Hardening, Launch Prep - **code-complete, typecheck, lint and build clean, 118 automated checks passing (Phases 8-13's 540 still passing too - 658 in total)**
 - **Last updated:** 2026-09-05
 - **Last updated by:** Claude Opus 5 (Claude Code)
-- **Next up:** nothing left to build. What remains is the non-code things under Known Issues: a `GEMINI_API_KEY`, a connected WhatsApp number, a Razorpay account with one plan per paid tier, and an email service. Until those exist, nothing here has ever answered a real customer, sent a real message, or taken a real rupee.
+- **Next up:** nothing left to build. What remains is the non-code things under Known Issues: a `GEMINI_API_KEY`, a connected WhatsApp number, a Razorpay account with one Razorpay plan per ChatWise plan (all three are paid), and an email service. Until those exist, nothing here has ever answered a real customer, sent a real message, or taken a real rupee.
 - **Phases built:** 0-14. All of them.
 - **Database:** Supabase (hosted PostgreSQL), confirmed by the product owner on 2026-09-03.
 - **AI provider:** **Google Gemini**, chosen by the product owner on 2026-09-05, replacing the assumed Anthropic. Default model `gemini-3.8-flash`, overridable with `GEMINI_MODEL`. `lib/ai-client.ts` is the only file that knows who the provider is; no agent, prompt or router line changed in the swap.
-- **Payments:** **Razorpay**, chosen by the product owner on 2026-09-05. Prices set by the owner the same day: Free, ₹999, ₹1,499 and ₹2,499 a month. The owner explicitly delegated *what each plan includes* to this codebase - those limits live in `lib/plans.ts` and are the one thing to edit to change the product's shape.
+- **Payments:** **Razorpay**, chosen by the product owner on 2026-09-05. Prices settled by the owner: **₹999 (Small Business) and ₹1,499 (Enterprise)** a month. The owner explicitly delegated *what each plan includes* to this codebase - those limits live in `lib/plans.ts` and are the one thing to edit to change the product's shape.
+- **Pricing model:** **both connection tiers are paid** - set by the product owner on 2026-09-05, replacing the earlier free-QR/paid-API split. There is **no free plan**. The QR tier is for small businesses and the monthly subscription is their whole bill, with no per-message cost. The API tier is for larger businesses: the same monthly subscription *plus* Meta's per-conversation charges, which **Meta bills directly to the customer's own Meta account**. That money never passes through ChatWise, and no rate for it is quoted anywhere in the code or the screens - the numbers are Meta's, they vary by country and conversation type, and inventing one would break docs/Rules.md §9. `FREE` survives only as a stored enum value meaning "no live subscription": it grants nothing, nothing sells it, and `lib/plans.ts` calls it `NO_SUBSCRIPTION_PLAN`.
 - **How to run any of this:** see "How to Run This" below - it covers the app on
-  its own, the free/QR tier, and the Business API tier.
+  its own, the QR tier, and the Business API tier.
 
 ## What's Done (working, tested)
 
@@ -28,7 +29,9 @@
 - [x] **Phase 14: The three missing folder READMEs written** - `app/`, `lib/` and `prisma/` had none, which docs/Architecture.md §3 says every folder carries.
 - [x] **Phase 14: Verified with 118 automated checks, most of them standing audits** - deliberately written against the source rather than against behaviour, because "every route checks who is asking" cannot be proved by exercising the routes you happened to think of. They check: every API route names an ownership guard or is on a five-entry list of public-by-design ones with a reason; both public webhooks verify a signature; every route catches its own errors; no secret's name appears in anything that runs in the browser; every file holding a secret is `server-only`; no key-shaped string is anywhere in the source; every environment variable the code reads is documented in `.env.example`; every sensitive route is rate limited and the limiter fails open; every security header is sent; every colour used exists in the theme; no screen prints a raw status; no customer's message is ever logged; nothing is pinned wider than the narrowest phone; and the documents still describe the code.
 
-- [x] **Phase 13: Four plans, in one file** - Free, Starter ₹999, Growth ₹1,499 and Pro ₹2,499. `lib/plans.ts` holds the prices, every limit and what each plan includes, as plain data with no secrets, read by the pricing page, the billing screen and every server-side check. The marketing pricing page used to keep its own copy of what each plan included; it now reads this one, so a plan can no longer say two different things in two places.
+- [x] **One plan per tier, and nothing else (2026-09-05)** - the plan ladder is gone. There are exactly **two plans, one per connection tier**: **Small Business ₹999** (QR connection) and **Enterprise ₹1,499** (official Business API). No sizes within a tier, no upsell path except moving between the two - the plan a business buys *is* the way it connects. `PlanId` in the database became `NONE / SMALL_BUSINESS / ENTERPRISE`, with migration `20260905220000_two_tier_plans` mapping existing rows (STARTER→SMALL_BUSINESS, GROWTH and PRO→ENTERPRISE, FREE→NONE). The Razorpay env vars are now `RAZORPAY_PLAN_ID_SMALL_BUSINESS` and `RAZORPAY_PLAN_ID_ENTERPRISE`; **anyone who was on PRO needs their Razorpay subscription re-pointed at the Enterprise plan by hand**, because the migration moves entitlement and only Razorpay can move what is charged. `planForConnectionType()` is the lookup between the two enums, since they now hold the same decision.
+- [x] **Both tiers are paid (2026-09-05)** - the product owner settled the pricing model: QR for small businesses at the subscription price and nothing per message, API for larger businesses at the subscription price plus Meta's per-conversation charges billed by Meta. The free plan is gone. `lib/plans.ts` holds the paid plans plus `NO_SUBSCRIPTION_PLAN` (the `NONE` enum value, all limits zero) for accounts that have not paid or have finished cancelling - they keep and can read everything, they just cannot send. `billingNote(plan)` is what every screen prints beside a price, so Enterprise can never show its subscription cost as if it were the whole bill. `whatsapp-connectors/capabilities.ts` gained `billsPerMessageAtMeta`, which is where "does anyone else charge for this?" is now answered. The words "free tier" and "paid tier" were removed from the whole repo - code, comments, schema, screens and docs - because both were pricing claims that had stopped being true; the tiers are named QR and API after what they are rather than what they cost.
+- [x] **Phase 13: The plans, in one file** - `lib/plans.ts` holds the prices, every limit and what each plan includes, as plain data with no secrets, read by the pricing page, the billing screen and every server-side check. The marketing pricing page used to keep its own copy of what each plan included; it now reads this one, so a plan can no longer say two different things in two places.
 - [x] **Phase 13: Razorpay, in one file** - `lib/razorpay.ts` is the only thing that talks to the payment provider: subscriptions, invoices, cancellation and webhook signature checking, over plain HTTPS with basic authentication. No SDK, for the same reason Meta's Graph API has none (docs/Rules.md §1). Swapping provider means replacing that one file.
 - [x] **Phase 13: Card details never reach ChatWise** - paying happens on Razorpay's own hosted page. The app hands over a link and gets a webhook back; it never sees a card number, and there is no publishable key in the browser either.
 - [x] **Phase 13: Only the webhook grants anything** - opening a payment page grants nothing at all. An account becomes entitled to a paid plan when a signed `subscription.*` event says the money arrived, and not before. The endpoint is public, so it verifies an HMAC-SHA256 signature over the raw bytes before believing a word of it - the same defence as the Meta webhook.
@@ -37,17 +40,17 @@
 - [x] **Phase 13: Running out of messages does not silence a business** - the agent stops replying by itself and hands the thread to a person, and the customer still gets one sentence rather than silence (docs/Rules.md §5). **Replying by hand in the inbox is deliberately never limited** - a plan caps the automation, not the owner. That sentence is filed as ChatWise's rather than the agent's, so it cannot flatter the agent's reply counts or answer times in Analytics.
 - [x] **Phase 13: Every limit is enforced where the spending happens** - campaigns and campaign size in `buildCampaign`, the agent's replies in the router, saved templates and knowledge answers in their own API routes, the official WhatsApp API at the point credentials are saved, and the analytics history window on the page itself. Not one of them is enforced only in the browser.
 - [x] **Phase 13: With payments off, nothing is limited** - an installation with no `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` behaves exactly as it did before Phase 13, and the billing screen says so plainly instead of showing buttons that would fail. Holding an account to a limit when there is no way to pay for a bigger one would be a bug wearing a business rule's clothes.
-- [x] **Phase 13: A failed payment doesn't switch the product off** - Razorpay retries a card for days. The account keeps its plan through `PAST_DUE` with a warning on the billing screen, and only drops back to Free when the subscription is actually cancelled. Cancelling keeps everything until the period already paid for runs out.
-- [x] **Phase 13: The billing screen** - current plan and status in plain words, what has been used this period against the plan's limits, all four plans with what changes between them, and invoices read live from Razorpay rather than copied into our database. Upgrades take effect immediately; downgrades wait for the month already paid for.
+- [x] **Phase 13: A failed payment doesn't switch the product off** - Razorpay retries a card for days. The account keeps its plan through `PAST_DUE` with a warning on the billing screen, and only drops to no plan at all when the subscription is actually cancelled. Cancelling keeps everything until the period already paid for runs out.
+- [x] **Phase 13: The billing screen** - current plan and status in plain words, what has been used this period against the plan's limits, both plans with what changes between them, and invoices read live from Razorpay rather than copied into our database. Upgrades take effect immediately; downgrades wait for the month already paid for.
 - [x] **Phase 13: Migration applied** - `20260905031834_billing_subscriptions` added `PlanId`, `SubscriptionStatus`, `Subscription` and `BillingEvent`.
 - [x] **Phase 13: Verified with 119 automated checks** - the plan list and its arithmetic; every Razorpay status translated, including an unknown one falling to "unpaid" rather than "paid"; a webhook signature accepted, and refused when the body, the secret or the length is wrong; the same event twice changing nothing twice; an event about somebody else's subscription ignored; a failed payment keeping the plan and a cancellation dropping it; usage counted from real rows with inbound and other accounts' traffic excluded; every limit at its exact boundary; the agent falling silent at the limit while a person can still reply; and the whole lot switching off when payments are off.
 
-- [x] **Phase 12: Campaigns are built, and every safety rule with them** - write a message, pick people who have already messaged you, and it goes out one at a time. `campaigns/send-campaign.ts` holds every rule in one place: the free tier's 25-recipient cap, the mandatory ban-risk warning, opt-outs excluded, an opt-out line appended, one campaign at a time, and - since Phase 13 - the plan's own limits (docs/Rules.md §8).
+- [x] **Phase 12: Campaigns are built, and every safety rule with them** - write a message, pick people who have already messaged you, and it goes out one at a time. `campaigns/send-campaign.ts` holds every rule in one place: the QR tier's 25-recipient cap, the mandatory ban-risk warning, opt-outs excluded, an opt-out line appended, one campaign at a time, and - since Phase 13 - the plan's own limits (docs/Rules.md §8).
 - [x] **Phase 12: Nobody is ever messaged twice** - enforced by the database (`@@unique([campaignId, contactPhone])`) rather than by whichever code path built the list, and each message is claimed atomically before it is sent, so two ticks of the sender can never both send it.
 - [x] **Phase 12: A send interrupted half-way is given up on, never retried** - if a message has been claimed for ten minutes with nothing to show for it, we cannot tell whether it went out. "Possibly sent twice" is worse than "definitely not sent" when the cost is a banned number.
 - [x] **Phase 12: The throttle is real** - 45 seconds either side of 15, written into each recipient's `sendAfter` when the campaign is built, so the spacing is a fact in the database rather than a timer somebody could restart. The number is **our own conservative guess, not Meta's**, and is flagged for the owner to tune.
 - [x] **Phase 12: STOP works, and only when it means STOP** - matched against the whole message with punctuation and case ignored, so "please don't stop sending me these" unsubscribes nobody. Handled before the escalation check, so a thread waiting for a person still honours it. Opt-outs are checked again at the moment of sending, because a campaign written on Monday may go out on Wednesday.
-- [x] **Phase 12: Templates on both tiers** - on the free tier a saved message; on the paid tier the name, language and approval status of something registered at Meta. A template Meta has not approved cannot be sent.
+- [x] **Phase 12: Templates on both tiers** - on the QR tier a saved message; on the API tier the name, language and approval status of something registered at Meta. A template Meta has not approved cannot be sent.
 - [x] **Phase 12: The sender runs on the always-on host** - `jobs/campaign-sender.ts` ticks every 15 seconds beside the QR session manager. PostgreSQL is the schedule, not BullMQ: a queue holding "this person still needs messaging" would be a second copy of a fact the database owns, and disagreement means double sends.
 - [x] **Phase 12: Delivery, read and reply tracking** - Meta's receipts are matched to a recipient by message id and can never walk backwards from "read" to "sent". A reply is noticed by the router.
 - [x] **Phase 12: Bulk messages never flatter the numbers** - recorded as `CAMPAIGN`, counted separately in Analytics, and skipped when working out how long people waited: a broadcast is not somebody answering a customer.
@@ -138,7 +141,7 @@
 - [x] **Phase 6: One Meta app per customer** — each customer supplies their own phone number ID, access token **and app secret**, all stored encrypted against their own connection. Nothing about Meta is configured platform-wide; there is no shared app secret and no shared verify token.
 - [x] **Phase 6: One webhook address per customer** — `/api/whatsapp/business-api/webhook/<their-own-token>`. Necessary rather than cosmetic: the signing secret belongs to the customer's app, so the account has to be identified *before* verification, and Meta's initial handshake carries no phone number at all. The verify token is generated for them and shown on the Connect screen.
 - [x] **Phase 6: The webhook defends itself** — the only route the public internet can reach without a login, so it verifies the HMAC signature over the **raw** request bytes using *that customer's* secret before reading a single field. Verified that **one customer's app secret cannot sign another customer's webhook**, and that unsigned, wrongly-signed, and signed-over-different-bytes payloads are all refused.
-- [x] **Phase 6: The free tier needs nothing from Meta** — verified that a QR-tier account's Connect screen never mentions an app secret, a phone number ID or a webhook, and that QR accounts are refused from the API routes entirely.
+- [x] **Phase 6: The QR tier needs nothing from Meta** — verified that a QR-tier account's Connect screen never mentions an app secret, a phone number ID or a webhook, and that QR accounts are refused from the API routes entirely.
 - [x] **Phase 6: Credentials verified before they're stored** — saving calls Meta to check the token actually works, so a typo is caught at setup rather than discovered when a customer's message goes unanswered. Confirmed against the real Graph API that a bogus token is rejected and the error becomes plain English.
 - [x] **Phase 6: Access tokens encrypted at rest** — same AES-256-GCM as the QR sessions. Verified against the database that the plain token does not appear in the stored bytes. Never returned to the browser, not even masked.
 - [x] **Phase 6: Connect WhatsApp page for API accounts** — credentials form, a four-step guide to where each value lives in Meta's console, the webhook address ready to copy, and message counters.
@@ -151,7 +154,7 @@
 the gap is infrastructure and outside accounts, not unfinished code — nothing is
 half-written.
 
-**Phase 5 (free/QR tier)** — two things remain, both needing the product owner:
+**Phase 5 (QR tier)** — two things remain, both needing the product owner:
 
 1. **Provide a Redis** and set `REDIS_URL` — then the app-to-worker path can be
    exercised end to end.
@@ -178,7 +181,7 @@ have:
 
 1. **An `GEMINI_API_KEY`.** Without it the pipeline still runs: the message
    arrives, is recorded, the customer is told a person will follow up, and the
-   thread is flagged. It is just never answered by an agent. The free-tier
+   thread is flagged. It is just never answered by an agent. The QR-tier
    worker host needs the key as well as the web app — the router runs in the
    session manager for QR accounts.
 2. **A connected number** (either tier), which is the same blocker as Phases 5
@@ -340,7 +343,7 @@ shape, and it is worth being blunt about the second half of it:
   in Meta and subscribed to the `messages` field.
 - ~~Meta's onboarding model~~ — **ANSWERED by the product owner on 2026-09-04:
   each customer brings their own Meta app and their own app secret, and
-  free-tier customers need nothing from Meta at all.** Phase 6 was reworked to
+  QR-tier customers need nothing from Meta at all.** Phase 6 was reworked to
   match; see the Decisions log. This closes one of docs/PRD.md §10's open
   questions.
 - **`META_GRAPH_API_VERSION` defaults to `v21.0`.** Meta retires versions on its
@@ -439,7 +442,7 @@ Per docs/Rules.md §10 — all of these need the product owner's confirmation.
     addresses are registered here.
 16. **Marketing copy was written from docs/PRD.md, not invented.** Every claim
     on the four public pages traces to the PRD. Two things were stated carefully
-    on purpose: the free tier's ban risk is described the way docs/PRD.md §7.1
+    on purpose: the QR tier's ban risk is described the way docs/PRD.md §7.1
     and §7.2 describe it rather than softened, and nothing asserts what Meta does
     or doesn't permit as fact (docs/Rules.md §8). **The copy still needs a read
     through by the product owner** — it is a sales page, and tone is their call.
@@ -720,14 +723,14 @@ These are docs/PRD.md §10's open questions. None blocked Phase 0.
 
 | Question | Needed by |
 |---|---|
-| ~~Final pricing tiers and per-plan limits~~ - **ANSWERED 2026-09-05: Free, ₹999, ₹1,499, ₹2,499.** The owner set the prices and delegated the limits behind them to this codebase; they are in `lib/plans.ts`. | ~~Phase 13~~ done |
+| ~~Final pricing tiers and per-plan limits~~ - **ANSWERED 2026-09-05: two plans, one per connection tier — Small Business ₹999 and Enterprise ₹1,499, both paid.** The owner set the prices and delegated the limits behind them to this codebase; they are in `lib/plans.ts`. Later the same day the owner also settled the tier model: both connection tiers are paid, the QR tier costs the subscription alone, and the API tier adds Meta's per-conversation charges billed by Meta to the customer. There is no free plan. | ~~Phase 13~~ done |
 | ~~Payment gateway~~ - **ANSWERED 2026-09-05: Razorpay.** Built. | ~~Phase 13~~ done |
-| ~~Meta WhatsApp Business API onboarding steps~~ — **ANSWERED 2026-09-04: each customer brings their own Meta app; free tier needs nothing from Meta.** Built. | ~~Phase 6~~ done |
+| ~~Meta WhatsApp Business API onboarding steps~~ — **ANSWERED 2026-09-04: each customer brings their own Meta app; QR tier needs nothing from Meta.** Built. | ~~Phase 6~~ done |
 | **Switching bot/connection type** — full re-onboarding on the same account (wiping the old config), an admin-assisted reset, or a new account? docs/Rules.md §6 leans toward "re-setup of the single slot", which is the working assumption. | Phase 4 |
-| ~~Is the background CRM agent always included?~~ - **ANSWERED 2026-09-05: always, on every plan including Free.** Making it a paid extra would leave a free account's leads screen silently empty, which reads as broken rather than as an upsell. | ~~Phase 13~~ done |
+| ~~Is the background CRM agent always included?~~ - **ANSWERED 2026-09-05: always, on every plan.** Making it a paid extra would leave the cheapest plan's leads screen silently empty, which reads as broken rather than as an upsell. | ~~Phase 13~~ done |
 | **New:** which email service should send password resets and verification emails (Resend, Postmark, SendGrid, Amazon SES…)? Nothing can email anyone until this is picked. | Whenever "forgot password" is wanted — no later than Phase 14 |
 | **New:** is NextAuth v5 **beta** acceptable, or should this drop back to the stable v4? See assumption 10. | Confirm before Phase 14 |
-| **Answered 2026-09-05:** the agents run on Google Gemini, `gemini-3.8-flash`, the same model on every plan. `GEMINI_MODEL` overrides it without a code change. Whether a cheaper model belongs on the free tier is still open, and is a pricing question as much as a technical one. | Revisit once real token cost is known |
+| **Answered 2026-09-05:** the agents run on Google Gemini, `gemini-3.8-flash`, the same model on every plan. `GEMINI_MODEL` overrides it without a code change. Whether a cheaper model belongs on Small Business is still open, and is a pricing question as much as a technical one. | Revisit once real token cost is known |
 | **New:** should agents ever handle photos, voice notes or documents? Today they are recorded and handed to a person. **Phase 8 kept it that way** — the Personal Shopper cannot see a picture of what someone wants. | Not blocking; decide before launch |
 
 ## Decisions Log
@@ -739,7 +742,7 @@ These are docs/PRD.md §10's open questions. None blocked Phase 0.
   is in `lib/razorpay.ts`, which is what would be replaced if the provider ever
   changed again.
 - **The prices are the owner's; the limits behind them were chosen here.** The
-  owner set ₹999 / ₹1,499 / ₹2,499 on 2026-09-05 and said to decide the features.
+  owner set ₹999 and ₹1,499 on 2026-09-05 and said to decide the features.
   What each plan includes is therefore a decision made in this codebase rather
   than a business fact handed down - it is recorded in `lib/plans.ts` with a
   comment saying so, and changing any number there changes the product with no
@@ -853,9 +856,9 @@ These are docs/PRD.md §10's open questions. None blocked Phase 0.
   sends them.** `composeFollowUpNudge` and `composeFeedbackRequest` sit in their
   own bot folders, so Phase 12's scheduler stays a timer and docs/Rules.md §2
   holds: no prompt text outside `/bots`.
-- **The message router runs in a different process on each tier.** The paid tier
+- **The message router runs in a different process on each tier.** The API tier
   runs it in the web app inside `after()` (Meta gets its 200 immediately, before
-  the agent starts thinking). The free tier runs it in the always-on session
+  the agent starts thinking). The QR tier runs it in the always-on session
   manager, because the serverless app cannot reach a browser session on another
   machine. Consequence: **the worker host needs `GEMINI_API_KEY` too.**
 - **Message text is now stored** (Phase 7), reversing the Phase 5/6 position that
@@ -997,7 +1000,7 @@ These are docs/PRD.md §10's open questions. None blocked Phase 0.
   campaigns and analytics, all of which then have to be found and changed
   together every time a tier rule moves. One `if` in one file instead.
 - **`SendOutcome` keeps "sent" and "queued" apart** rather than collapsing them
-  into a success flag. The paid tier calls Meta and knows; the free tier hands a
+  into a success flag. The API tier calls Meta and knows; the QR tier hands a
   command to a worker and does not. Reporting "sent" for the second is the
   stale-status trap docs/Rules.md §4 exists to prevent. `failed` and
   `unavailable` are likewise separate because one is worth retrying and the
@@ -1016,7 +1019,7 @@ These are docs/PRD.md §10's open questions. None blocked Phase 0.
   would be invented rather than derived. Phase 7 defines it against a real one.
 - **The Business API connector runs inside the web app** — no worker, no Redis,
   no Chromium. It is ordinary HTTPS to Meta, so the whole worker-hosting problem
-  below simply doesn't apply to the paid tier.
+  below simply doesn't apply to the API tier.
 - **A failed send writes `lastError` on the connection.** The dashboard then
   reports the truth rather than a stale "connected" (docs/Rules.md §4), and
   traffic arriving on the webhook clears it back to `CONNECTED`.
@@ -1133,7 +1136,7 @@ These are docs/PRD.md §10's open questions. None blocked Phase 0.
 
 ## How to Run This
 
-Three levels: the app alone, the app plus the free/QR WhatsApp tier, and the app
+Three levels: the app alone, the app plus the QR WhatsApp tier, and the app
 plus the Business API tier. **An account is one tier or the other, never both**
 — which one it gets is chosen in setup Step B, and the Connect WhatsApp screen
 shows only that tier.
@@ -1166,10 +1169,10 @@ Sign up at <http://localhost:3000/signup>, and check
 Postgres? `npx prisma dev --name chatwise --detach`, then `npx prisma dev ls`
 for its URL — note it picks a new port each time it is created.
 
-### 2. Running the free tier (QR code)
+### 2. Running the QR tier (QR code)
 
 Needs a Redis, a Chrome/Chromium on the machine, and a second process. Pick
-"Free — scan a QR code" in setup Step B.
+"Scan a QR code — for small businesses" in setup Step B.
 
 ```bash
 docker run -p 6379:6379 redis        # or an Upstash / Railway free tier
@@ -1197,7 +1200,7 @@ The worker runs TypeScript directly under plain Node, so **this half needs
 Node 22.18+/24** (assumption 28). With Redis unreachable the page says so and
 the routes return 503 rather than hanging — that is deliberate, not a bug.
 
-### 3. Running the paid tier (WhatsApp Business API)
+### 3. Running the API tier (WhatsApp Business API)
 
 No Redis, no Chrome, no second process — it is ordinary HTTPS to Meta from
 inside the web app. Pick "Paid — WhatsApp Business API" in setup Step B.
@@ -1408,7 +1411,7 @@ const page = `<body style="margin:0;display:flex;gap:20px">
   adding a second agent. Renamed the route `dashboard/agents/` →
   `dashboard/my-bot/` and updated docs/Architecture.md to match. Build and lint
   clean; 38 automated checks pass; screenshotted at desktop, tablet and mobile.
-- **In progress / left off at:** nothing mid-flight. Phase 5 (the free/QR
+- **In progress / left off at:** nothing mid-flight. Phase 5 (the QR
   WhatsApp connection) is next, once the product owner has tested Phase 4.
 - **New assumptions or decisions:** the `my-bot` rename; re-setup means
   reopening the wizard on the same account with answers kept; the dashboard stays
@@ -1420,7 +1423,7 @@ const page = `<body style="margin:0;display:flex;gap:20px">
 
 ## Session Update — 2026-09-04 (Phase 5)
 
-- **Worked on:** Phase 5 — the free-tier WhatsApp connection.
+- **Worked on:** Phase 5 — the QR-tier WhatsApp connection.
 - **Completed:** The whole `web-qr` connector — an isolated child process per
   customer, the supervisor that manages them, encrypted session storage in the
   database, the command/event protocol, QR rendering, four API routes and the
@@ -1464,7 +1467,7 @@ npm run whatsapp-worker
 
 ## Session Update — 2026-09-04 (Phase 6)
 
-- **Worked on:** Phase 6 — the paid-tier WhatsApp connection (official Business
+- **Worked on:** Phase 6 — the API-tier WhatsApp connection (official Business
   API).
 - **Completed:** The whole `business-api` connector — `graph-api.ts`,
   `credentials.ts`, `send-message.ts`, `webhook-handler.ts` — plus the public
@@ -1520,7 +1523,7 @@ npm run whatsapp-worker
 
 - **Worked on:** reworking Phase 6 after the product owner answered
   docs/PRD.md §10 — **each customer brings their own Meta app and app secret;
-  free-tier customers need nothing from Meta.**
+  QR-tier customers need nothing from Meta.**
 - **What changed:** `META_APP_SECRET` and `WHATSAPP_WEBHOOK_VERIFY_TOKEN` are no
   longer environment variables at all. The app secret is now a per-connection
   encrypted column, and each customer gets their own webhook address
@@ -1532,7 +1535,7 @@ npm run whatsapp-worker
   identifier available at that moment.
 - **Verified:** 23 isolation checks — including that **one customer's app secret
   cannot sign another customer's webhook** — plus 17 tier-separation and
-  validation checks, all with **no platform Meta variables set**. The free tier's
+  validation checks, all with **no platform Meta variables set**. The QR tier's
   Connect screen was confirmed to mention no app secret, no phone number ID and
   no webhook. Build and lint clean.
 - **Anything broken:** no. The migration adding the required columns was written
@@ -1808,21 +1811,22 @@ session.
 
 **Phase 12 - campaigns.** Bulk outreach with every safety rule from
 docs/Rules.md §8 enforced in `campaigns/send-campaign.ts` rather than in the
-screens: the 25-recipient cap on the free connection, the mandatory ban-risk
+screens: the 25-recipient cap on the QR connection, the mandatory ban-risk
 warning, opt-outs checked when the campaign is written *and* again at the moment
 each message goes out, an opt-out line appended, approved templates required on
-the paid tier, and one campaign at a time. Sending happens on the always-on host
+the API tier, and one campaign at a time. Sending happens on the always-on host
 (`jobs/campaign-sender.ts`, ticking every 15 seconds), with each message claimed
 atomically so two ticks can never both send it. 106 checks.
 
 **Phase 13 - billing.** Mid-session the product owner settled two of the
 longest-standing open questions: **Razorpay rather than Stripe**, and prices of
-**₹999, ₹1,499 and ₹2,499 a month**, with the features behind each tier
+**₹999 and ₹1,499 a month**, with the features behind each tier
 delegated to this codebase. So:
 
-- `lib/plans.ts` - four plans (Free, Starter, Growth, Pro) as plain data. The
-  prices are the owner's; every limit is a decision made here, and the file says
-  so. It is the single file to edit to change the product's shape.
+- `lib/plans.ts` - two paid plans (Small Business, Enterprise) as plain data, plus
+  `NO_SUBSCRIPTION_PLAN` for an account that has not paid. The prices are the
+  owner's; every limit is a decision made here, and the file says so. It is the
+  single file to edit to change the product's shape.
 - `lib/razorpay.ts` - the only file that talks to Razorpay, over plain HTTPS with
   no SDK.
 - `lib/subscription.ts` - which plan an account is on; `lib/usage.ts` - what it
@@ -1865,8 +1869,8 @@ rupee.
 
 **To finish the sign-off, three non-code things are needed:** an
 `ANTHROPIC_API_KEY` (on the worker host too), a connected WhatsApp number, and a
-Razorpay account with one monthly plan per paid tier, whose ids go in
-`RAZORPAY_PLAN_ID_STARTER` / `_GROWTH` / `_PRO`.
+Razorpay account with one monthly Razorpay plan per ChatWise plan — all three
+are paid — whose ids go in `RAZORPAY_PLAN_ID_SMALL_BUSINESS` and `_ENTERPRISE`.
 
 **One thing to verify against Razorpay's live documentation** before the first
 real plan change: `changeSubscriptionPlan` in `lib/razorpay.ts` is the single

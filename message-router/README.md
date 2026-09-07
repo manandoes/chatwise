@@ -28,8 +28,8 @@ What it does, in order:
   because everything *around* that decision has to live somewhere, and because
   it is the one place a choice would go if the product ever grows one.
 - **It does not know how to send anything.** Whoever calls it passes in a way to
-  deliver the reply — Meta's API for the paid tier, the customer's own worker
-  process for the free tier. That keeps the browser-driving, signature-checking
+  deliver the reply — Meta's API for the API tier, the customer's own worker
+  process for the QR tier. That keeps the browser-driving, signature-checking
   half of the system out of here entirely.
 - **It never throws.** A webhook that fails makes Meta retry; a worker that
   crashes takes somebody's WhatsApp down. Failures are logged and returned as

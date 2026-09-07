@@ -1,6 +1,6 @@
 // Saving one of the business's own message templates.
 //
-// What counts as valid depends on the tier, and not cosmetically: on the paid
+// What counts as valid depends on the tier, and not cosmetically: on the API
 // tier a template is a claim about something registered at Meta, and its words
 // must already contain an opt-out line because nothing can be appended to an
 // approved template later (docs/Rules.md §8). The tier comes from the account's

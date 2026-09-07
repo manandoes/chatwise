@@ -7,7 +7,7 @@ import { PricingPlans } from "@/components/marketing/pricing-plans";
 export const metadata: Metadata = {
   title: "Pricing",
   description:
-    "One agent, one WhatsApp connection, one simple choice: a free QR connection, or the official WhatsApp Business API.",
+    "One agent, one WhatsApp connection, one simple choice: a QR connection with no per-message cost, or the official WhatsApp Business API with Meta's charges on top.",
 };
 
 export default function PricingPage() {
@@ -16,13 +16,13 @@ export default function PricingPage() {
       <section className="mx-auto w-full max-w-content px-6 py-16 lg:py-20">
         <div className="max-w-[62ch]">
           <h1 className="text-balance text-[clamp(2rem,4vw,2.75rem)] font-bold leading-tight tracking-[-0.02em] text-text-primary">
-            One agent, one number, four sizes
+            One agent, one number, two ways to connect
           </h1>
           <p className="mt-5 text-pretty text-[1.0625rem] leading-relaxed text-text-secondary">
-            Every plan runs one agent on one WhatsApp number, so there is nothing
-            to add up per seat or per bot. What changes is how much you send, how
-            far back your history goes, and whether you use the official WhatsApp
-            Business API. Start free — no card.
+            There are two plans, one for each way of connecting to WhatsApp —
+            and nothing else to work out. Both run one agent on one WhatsApp
+            number, so there is nothing to add up per seat or per bot. Pick the
+            connection that suits your business and that is your plan.
           </p>
         </div>
 
@@ -32,10 +32,12 @@ export default function PricingPage() {
             <span className="font-medium text-text-primary">
               Prices are in rupees, billed monthly.
             </span>{" "}
-            Move up or down whenever you like — moving up takes effect straight
-            away, and moving down waits until the month you&rsquo;ve paid for has
-            finished. On the Growth and Pro plans, Meta also charges per message
-            for the official API; that is their charge, passed through.
+            Switch between the two whenever you like — moving up takes effect
+            straight away, and moving down waits until the month you&rsquo;ve
+            paid for has finished. On Small Business this price is your whole
+            bill. On Enterprise, Meta charges you per conversation on top,
+            billed by Meta to your own Meta account at their rates — we never
+            see that money and cannot quote it for you.
           </p>
         </div>
 
@@ -70,8 +72,8 @@ export default function PricingPage() {
       </section>
 
       <CtaBand
-        heading="Start on the free plan"
-        body="No card, no Meta application. Scan a QR code and your agent is answering."
+        heading="Start on Small Business"
+        body="No Meta application, and nothing charged per message. Scan a QR code and your agent is answering."
         secondary={{ href: "/faq", label: "Read the FAQ" }}
       />
     </>

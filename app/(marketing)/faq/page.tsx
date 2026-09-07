@@ -30,7 +30,7 @@ export default function FaqPage() {
 
       <CtaBand
         heading="Still deciding?"
-        body="The free plan costs nothing and takes minutes. It's the fastest way to find out whether this works for your business."
+        body="Small Business takes minutes to set up and charges nothing per message. It's the fastest way to find out whether this works for you."
         secondary={{ href: "/features", label: "See what it does" }}
       />
     </>

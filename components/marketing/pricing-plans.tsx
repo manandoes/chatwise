@@ -4,21 +4,25 @@
 // every limit check read. Before Phase 13 this component kept its own copy of
 // what each plan included, which is exactly the kind of second version of a
 // fact that goes quietly out of date. Now a plan changes in one place.
+//
+// Every plan here is paid. The line under each price comes from `billingNote`
+// rather than being written here, because on the API plans the price is not the
+// whole bill — Meta charges per conversation on top — and a pricing page that
+// implies otherwise is making a claim we cannot stand behind.
 
 import { Check } from "lucide-react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
-import { PLANS, formatRupees } from "@/lib/plans";
+import { PLANS, billingNote, formatRupees } from "@/lib/plans";
 
 /** The one plan given visual weight. Most businesses land here. */
-const RECOMMENDED = "GROWTH";
+const RECOMMENDED = "SMALL_BUSINESS";
 
 export function PricingPlans() {
   return (
-    <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+    <div className="mx-auto grid max-w-4xl gap-6 md:grid-cols-2">
       {PLANS.map((plan) => {
-        const isFree = plan.monthlyPriceInRupees === 0;
         const emphasised = plan.id === RECOMMENDED;
 
         return (
@@ -44,8 +48,8 @@ export function PricingPlans() {
             <p className="mt-4 text-h2 font-bold tracking-tight text-text-primary">
               {formatRupees(plan.monthlyPriceInRupees)}
             </p>
-            <p className="mt-1 text-small text-text-secondary">
-              {isFree ? "No card needed" : "a month"}
+            <p className="mt-1 text-pretty text-small text-text-secondary">
+              {billingNote(plan)}
             </p>
 
             <p className="mt-5 text-pretty text-small leading-relaxed text-text-secondary">
@@ -70,9 +74,7 @@ export function PricingPlans() {
               variant={emphasised ? "default" : "outline"}
               className="mt-7 w-full"
             >
-              <Link href="/signup">
-                {isFree ? "Start free" : `Start on ${plan.name}`}
-              </Link>
+              <Link href="/signup">{`Start on ${plan.name}`}</Link>
             </Button>
           </div>
         );

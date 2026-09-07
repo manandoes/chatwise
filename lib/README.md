@@ -40,8 +40,9 @@ those carry no secrets and import nothing that does.
 
 ## Money
 
-- `plans.ts` — **the one file to edit when a plan changes.** The four plans,
-  their prices and every limit, as plain data. No secrets; safe in the browser
+- `plans.ts` — **the one file to edit when a plan changes.** The two plans —
+  one per connection tier, both paid — their prices and every limit, as plain
+  data. No secrets; safe in the browser
 - `razorpay.ts` — the only file that talks to the payment provider
 - `subscription.ts` — which plan an account is on, and how that changes
 - `usage.ts` — what has been used this period, counted from the real rows, and

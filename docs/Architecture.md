@@ -11,8 +11,8 @@
 | Auth | NextAuth.js v5 / Auth.js — email/password + Google OAuth, sessions in a signed cookie | Handles sessions, OAuth, and security best-practices out of the box. Passwords are hashed with Node's built-in `scrypt` (see `lib/password.ts`) rather than an extra dependency. |
 | Styling | Tailwind CSS + shadcn/ui components | Fast to build, easy to theme (see Design.md), consistent components |
 | Background jobs / queues | BullMQ + Redis | Needed for: message follow-ups, scheduled sends, reconnect checks, WhatsApp-web.js session workers |
-| Free-tier WhatsApp connection | **whatsapp-web.js**, one isolated Node.js worker process per connected user | Keeps one user's session crash/ban risk from affecting anyone else (see §5) |
-| Paid-tier WhatsApp connection | Official **WhatsApp Business Cloud API** (Meta) via webhooks | Official, reliable, per-message billed channel for larger businesses |
+| QR-tier WhatsApp connection | **whatsapp-web.js**, one isolated Node.js worker process per connected user | Keeps one user's session crash/ban risk from affecting anyone else (see §5) |
+| API-tier WhatsApp connection | Official **WhatsApp Business Cloud API** (Meta) via webhooks | Official, reliable, per-message billed channel for larger businesses |
 | File/image storage | S3-compatible object storage (e.g. Cloudflare R2 or AWS S3) | Knowledge base uploads, catalog images |
 | Payments | **Razorpay** — chosen by the product owner on 2026-09-05, settling PRD.md §10. Called over plain HTTPS from `lib/razorpay.ts`; no SDK | Subscription billing in rupees, hosted payment pages so no card details reach this codebase, and invoices we read rather than copy (see §5f) |
 | Hosting | Vercel (Next.js app) + a separate small VM/container host for the whatsapp-web.js workers | Next.js app is stateless/serverless-friendly; whatsapp-web.js workers are NOT serverless-friendly (need persistent Chromium sessions), so they run on a normal always-on server |
@@ -25,7 +25,7 @@
         v
 [Onboarding Wizard]
   Step A: Pick agent(s)
-  Step B: API (paid) or QR (free)?
+  Step B: API or QR? (both paid)
   Step C: Business/product questions (varies per agent picked)
   Step D: How the bot should act (tone, escalation rules)
         |
@@ -72,24 +72,24 @@ Response sent back to WhatsApp + logged in Conversations/Inbox + Analytics updat
 The two tiers reach the same `message-router/router.ts` from different processes,
 because they have to:
 
-| | Paid tier (Business API) | Free tier (QR) |
+| | API tier (Business API) | QR tier (QR) |
 |---|---|---|
 | Message arrives at | the webhook route in the Next.js app | the customer's own worker process |
 | The router runs in | the web app, inside `after()` | the always-on session manager |
 | The reply goes out via | an HTTPS call to Meta | the worker holding that browser session |
 
-The paid tier answers Meta with a `200` **before** the agent starts thinking:
+The API tier answers Meta with a `200` **before** the agent starts thinking:
 Meta gives a webhook only a few seconds before it assumes we are down and starts
 re-sending, and a model takes longer than that. Next.js's `after()` runs the work
 once the response has gone.
 
-The free tier cannot run the router in the web app at all — the app is
+The QR tier cannot run the router in the web app at all — the app is
 serverless and has no way to reach a browser session running on another machine.
 So the manager, which already owns those child processes, calls the router
 itself. Consequently **the worker host needs the AI key too**, not just the web
 app.
 
-One thing the free tier deliberately does *not* do: the customer's message text
+One thing the QR tier deliberately does *not* do: the customer's message text
 travels from the worker to its own parent over the private process channel, and
 is stripped before anything is relayed to the shared Redis event queue. Their
 conversation belongs in their owner's inbox, not in infrastructure every part of
@@ -144,7 +144,7 @@ Designed so a non-technical person can open the file tree and understand what's 
 │       ├── whatsapp/
 │       │   ├── business-api/           #   credentials + send-test, and
 │       │   │   └── webhook/[token]/     #     one PUBLIC webhook address per customer
-│       │   └── qr-session/             #   start / status / stop / send-test for the free tier
+│       │   └── qr-session/             #   start / status / stop / send-test for the QR tier
 │       ├── billing/                    #   subscription/ (start, change, cancel) and
 │       │                               #     webhook/ — PUBLIC, where Razorpay reports a
 │       │                               #     payment. The only path to a paid plan
@@ -190,7 +190,7 @@ Designed so a non-technical person can open the file tree and understand what's 
 │   │   ├── credentials.ts              #     Encrypted storage + verifying them against Meta
 │   │   ├── send-message.ts
 │   │   └── webhook-handler.ts          #     Signature checking + routing a message to an account
-│   └── web-qr/                         #   whatsapp-web.js integration (free tier)
+│   └── web-qr/                         #   whatsapp-web.js integration (QR tier)
 │       ├── worker.ts                   #   The isolated per-user session process
 │       ├── session-manager.ts          #   Starts/stops/tracks each user's worker
 │       ├── session-store.ts            #   Saves that session, encrypted, in the database
@@ -208,7 +208,7 @@ Designed so a non-technical person can open the file tree and understand what's 
 │   │                                   #   time. Every safety rule is here: the 25 cap,
 │   │                                   #   the warning, opt-outs checked twice, approved
 │   │                                   #   templates, and the plan's own limits
-│   ├── throttle.ts                     #   Spaces out free-tier sends to reduce ban risk
+│   ├── throttle.ts                     #   Spaces out QR-tier sends to reduce ban risk
 │   ├── templates/
 │   │   ├── starter-templates.ts        #   Ready-made wording to start from (PRD §7.3)
 │   │   └── saved-templates.ts          #   The messages a business keeps to reuse
@@ -245,7 +245,7 @@ Designed so a non-technical person can open the file tree and understand what's 
 │   │                                   #   counted from real Conversation/Message/Lead rows
 │   ├── format-when.ts                  #   "Yesterday", "2:14 pm", "4 minutes" — times
 │   │                                   #   and durations as people say them
-│   ├── plans.ts                        #   The four plans as data — prices, limits and what
+│   ├── plans.ts                        #   The two paid plans as data — prices, limits and what
 │   │                                   #   each includes. THE file to edit when a plan
 │   │                                   #   changes. Safe for the browser; holds no secrets
 │   ├── razorpay.ts                     #   The only file that talks to the payment provider
@@ -305,9 +305,9 @@ belongs in it — so the file tree stays readable to a non-developer.
 - **Conversation (Phase 9 additions)** — records *who* stopped the agent replying (the agent handing over, or a person taking the thread over) and how many of the contact's messages have arrived since anyone looked.
 - **KnowledgeEntry** — *(built in Phase 7)* one question-and-answer pair a Business's agent may answer from. The Phase 7 knowledge base is exactly this list plus the setup answers; uploads and catalogues come later.
 - **Lead** — *(built in Phase 8, screens in Phase 10)* CRM record: contact info, score, status, tags, and a sentence on what the person wants. One per conversation, written by the background CRM agent. It also records **which fields a person edited by hand**, because those are the ones the agent must leave alone from then on (docs/Rules.md §5).
-- **Campaign** — *(built in Phase 12)* a bulk send: the words, the tier it was written for, its status and schedule, and the Meta template it names on the paid tier.
+- **Campaign** — *(built in Phase 12)* a bulk send: the words, the tier it was written for, its status and schedule, and the Meta template it names on the API tier.
 - **CampaignRecipient** — *(built in Phase 12)* one row per person per campaign: their own copy of the message with the placeholders already filled in, the earliest it may go out (the throttle, written down), and what became of it. UNIQUE on `(campaignId, contactPhone)`, so nobody can be messaged twice by one campaign whatever the code does.
-- **MessageTemplate** — *(built in Phase 12)* a message a business keeps to reuse. On the free tier that is a convenience; on the paid tier it also records the name and approval status of the template registered at Meta.
+- **MessageTemplate** — *(built in Phase 12)* a message a business keeps to reuse. On the QR tier that is a convenience; on the API tier it also records the name and approval status of the template registered at Meta.
 - **~~ContactList / Segment~~** — **deliberately not built.** See §5e: `CampaignRecipient` *is* the list, and recipients only ever come from conversations the business already has.
 - **OptOut** — *(built in Phase 12)* somebody who asked not to be messaged again. Keyed on the phone number rather than the conversation, so it survives a thread being deleted, and checked before every send on every tier (docs/Rules.md §8).
 - **Subscription** — *(built in Phase 13)* one row per business: which plan, what state the payment is in, Razorpay's customer and subscription ids, the paid period, and whether a cancellation or downgrade is waiting for that period to end. No usage counters — see §5f.
@@ -334,7 +334,7 @@ radio inputs, so the interface cannot express a second choice.
 
 ## 5. Why Isolated Per-User Processes for the Free (QR) Tier
 
-Each free-tier customer's whatsapp-web.js session:
+Each QR-tier customer's whatsapp-web.js session:
 - Runs as its own worker process (not a shared process handling all users' sessions)
 - Has its own browser session storage, so one user's disconnect, ban, or crash cannot affect another user
 - Is started/stopped on demand by `session-manager.ts` and tracked in the `WhatsAppConnection` table
@@ -422,7 +422,7 @@ returned to the browser, not even masked; the dashboard is told only *whether*
 credentials exist.
 
 **The free (QR) tier needs none of this.** That route never contacts Meta, so a
-free-tier customer has no Meta app, no app secret and no webhook.
+QR-tier customer has no Meta app, no app secret and no webhook.
 
 ## 5b. How the live inbox works (built in Phase 9)
 
@@ -519,13 +519,13 @@ every rule is applied, in one place, on the server:
 2. The account must have a connection, and only **one** campaign may be waiting
    or sending at a time. Two overlapping campaigns would send at twice the rate
    the throttle exists to hold.
-3. The free tier's 25-recipient cap and its ban-risk warning are required, from
+3. The QR tier's 25-recipient cap and its ban-risk warning are required, from
    `whatsapp-connectors/capabilities.ts` (docs/Rules.md §8).
 4. The plan's own limits are applied too — how many campaigns this month, and
    whether there are enough messages left to send to everybody chosen (§5f).
 5. Everyone who has opted out is removed, and an opt-out line is appended if the
    message does not already have one.
-6. On the paid tier the named template must be one Meta has approved.
+6. On the API tier the named template must be one Meta has approved.
 7. Each person's copy is written out in full, with `{name}` already filled in,
    and given the exact time it may go out.
 
@@ -552,12 +552,23 @@ Two decisions worth knowing, both departures from the original sketch:
 entitlement.** Razorpay says whether a payment went through. `lib/plans.ts` says
 what that entitles the account to, and `lib/usage.ts` enforces it.
 
-- **`lib/plans.ts` is the only file to edit when a plan changes.** Four plans —
-  Free, Starter (₹999), Growth (₹1,499) and Pro (₹2,499) — with every limit as
-  plain data. It holds no secrets and is safe to read in the browser, so the
-  pricing page, the billing screen and the server checks all read the same
+- **`lib/plans.ts` is the only file to edit when a plan changes.** Two plans,
+  both paid, **one per connection tier and nothing else** — Small Business
+  (₹999, QR) and Enterprise (₹1,499, Business API) — with every limit as plain
+  data, plus `NO_SUBSCRIPTION_PLAN` for an account that has not paid or has
+  finished cancelling. It holds no secrets and is safe to read in the browser, so
+  the pricing page, the billing screen and the server checks all read the same
   numbers. The *prices* are display only: what is actually charged is the plan
-  set up in Razorpay, named by the `RAZORPAY_PLAN_ID_*` environment variables.
+  set up in Razorpay, named by the `RAZORPAY_PLAN_ID_*` environment variables —
+  and on Enterprise the price is not even the customer's whole bill, because Meta
+  charges them per conversation on top of it.
+
+- **The plan and the connection tier are the same choice.** `PlanId` and
+  `ConnectionType` are separate enums because they are stored on different rows,
+  but they hold the same decision: Small Business is the QR tier, Enterprise is
+  the API tier. `planForConnectionType` in `lib/plans.ts` is the lookup between
+  them, and `checkApiConnectionAllowed` in `lib/usage.ts` is what stops an
+  account on one plan wiring up the other tier's connection.
 - **`lib/razorpay.ts` is the only file that talks to Razorpay.** Plain HTTPS with
   basic authentication, the same way `business-api/graph-api.ts` calls Meta — no
   SDK, because the API is form-simple and every dependency is something the
@@ -586,7 +597,7 @@ What a limit does when it is reached:
 | Messages vs campaign size | A campaign that would not fit in what is left is refused, saying how many are left. |
 | Saved templates | A new one is refused; editing the ones already saved always works. |
 | Knowledge answers | Saving the list is refused, saying how many the plan includes. |
-| Official WhatsApp Business API | Saving API credentials is refused below the Growth plan. |
+| Official WhatsApp Business API | Saving API credentials is refused on any plan but Enterprise. |
 | History window | Analytics offers only the periods the plan allows, and quietly gives the longest allowed rather than arguing about the address bar. |
 
 And one rule that overrides all of them: **when `RAZORPAY_KEY_ID` and
