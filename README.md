@@ -1,3 +1,5 @@
+<!-- Next time you push code changes, just SSH in and rerun sudo bash /mnt/data/chatwise/deploy.sh -->
+
 # ChatWise
 
 ChatWise lets a business put a ready-made **AI agent on their own WhatsApp
