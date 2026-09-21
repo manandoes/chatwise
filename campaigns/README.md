@@ -19,10 +19,14 @@ Also here:
 
 ## The two things most worth knowing
 
-**You can only message somebody who messaged you first.** Contacts come from the
-conversations this account already has. There is no import, and nowhere to type
-a phone number in. It is the strongest thing the product does to keep its
-customers out of trouble.
+**A campaign reaches two kinds of people, and treats them identically.** Picked
+contacts come from the conversations this account already has; typed numbers are
+pasted in by the owner for people who have never written (`phone-list.ts`). They
+are merged by phone number in `buildCampaign` before any rule is applied, so the
+25-recipient cap, the opt-out list, the plan's quota and the ban-risk warning
+count everybody the same way. A typed number gets a conversation of its own —
+but only once the campaign is certain to be written, so a refused send never
+leaves a stranger sitting in the inbox.
 
 **Nobody is ever messaged twice.** Each recipient row is claimed atomically
 before it is sent, and a send interrupted half-way is failed rather than

@@ -88,9 +88,24 @@ export type AiResult =
       message: string;
     };
 
-/** Whether an AI key is present at all. Checked before an agent is asked to think. */
-export function isAiConfigured(): boolean {
-  return Boolean(process.env.GEMINI_API_KEY);
+/**
+ * Which key a call actually goes out on.
+ *
+ * An account may bring its own (lib/ai-credentials.ts), in which case that is
+ * what it thinks with and what it is billed for. An account that hasn't runs on
+ * the platform's own key, so nothing stops working for anyone who never sets
+ * one.
+ */
+function keyToUse(ownKey?: string | null): string | undefined {
+  return ownKey?.trim() || process.env.GEMINI_API_KEY || undefined;
+}
+
+/**
+ * Whether an AI key is present at all — the account's own, or the platform's.
+ * Checked before an agent is asked to think.
+ */
+export function isAiConfigured(ownKey?: string | null): boolean {
+  return Boolean(keyToUse(ownKey));
 }
 
 type ApiResponse = {
@@ -103,34 +118,29 @@ type ApiResponse = {
 };
 
 /**
- * Asks the model for a reply.
+ * The one call to the provider, shared by every caller below.
  *
- * `system` is the agent's instructions — its prompt.ts, filled in with that
- * business's own details. `messages` is the conversation so far, oldest first.
+ * `generateReply` (a bot's chat turn) and `extractFromDocument` (reading a
+ * file) send different request bodies, but need the exact same treatment of a
+ * missing key, a timeout, a non-200, and an empty reply — so that treatment
+ * lives once, here, rather than being copied per caller.
  */
-export async function generateReply({
-  system,
-  messages,
-  maxTokens = DEFAULT_MAX_TOKENS,
-}: {
-  system: string;
-  messages: AiMessage[];
-  maxTokens?: number;
-}): Promise<AiResult> {
-  const apiKey = process.env.GEMINI_API_KEY;
+async function callGemini(
+  body: Record<string, unknown>,
+  ownKey?: string | null,
+): Promise<AiResult> {
+  const apiKey = keyToUse(ownKey);
 
   if (!apiKey) {
-    console.error("[ai] GEMINI_API_KEY is not set — no agent can reply");
+    console.error(
+      "[ai] no API key — neither this account's own nor GEMINI_API_KEY — so no agent can reply",
+    );
 
     return {
       ok: false,
       reason: "not-configured",
       message: "The assistant isn't set up yet.",
     };
-  }
-
-  if (messages.length === 0) {
-    return { ok: false, reason: "failed", message: "There was nothing to reply to." };
   }
 
   let response: Response;
@@ -142,19 +152,7 @@ export async function generateReply({
         "content-type": "application/json",
         "x-goog-api-key": apiKey,
       },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        // Gemini calls the assistant's own turns "model"; everything else about
-        // the conversation is the same shape the agents already build.
-        contents: messages.map((message) => ({
-          role: message.role === "assistant" ? "model" : "user",
-          parts: [{ text: message.content }],
-        })),
-        generationConfig: {
-          maxOutputTokens: maxTokens + THINKING_HEADROOM_TOKENS,
-          thinkingConfig: { thinkingLevel: THINKING_LEVEL },
-        },
-      }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch (error) {
@@ -192,8 +190,8 @@ export async function generateReply({
     };
   }
 
-  const body = (await response.json().catch(() => null)) as ApiResponse | null;
-  const candidate = body?.candidates?.[0];
+  const responseBody = (await response.json().catch(() => null)) as ApiResponse | null;
+  const candidate = responseBody?.candidates?.[0];
 
   const text = (candidate?.content?.parts ?? [])
     .map((part) => part?.text)
@@ -207,7 +205,7 @@ export async function generateReply({
     // conversation back.
     console.error(
       "[ai] provider returned no usable text:",
-      body?.promptFeedback?.blockReason || candidate?.finishReason || "no reason given",
+      responseBody?.promptFeedback?.blockReason || candidate?.finishReason || "no reason given",
     );
 
     return {
@@ -218,4 +216,86 @@ export async function generateReply({
   }
 
   return { ok: true, text };
+}
+
+/**
+ * Asks the model for a reply.
+ *
+ * `system` is the agent's instructions — its prompt.ts, filled in with that
+ * business's own details. `messages` is the conversation so far, oldest first.
+ */
+export async function generateReply({
+  system,
+  messages,
+  maxTokens = DEFAULT_MAX_TOKENS,
+  apiKey,
+}: {
+  system: string;
+  messages: AiMessage[];
+  maxTokens?: number;
+  /** This account's own key, where it has one. Falls back to the platform's. */
+  apiKey?: string | null;
+}): Promise<AiResult> {
+  if (messages.length === 0) {
+    return { ok: false, reason: "failed", message: "There was nothing to reply to." };
+  }
+
+  return callGemini(
+    {
+      systemInstruction: { parts: [{ text: system }] },
+      // Gemini calls the assistant's own turns "model"; everything else about
+      // the conversation is the same shape the agents already build.
+      contents: messages.map((message) => ({
+        role: message.role === "assistant" ? "model" : "user",
+        parts: [{ text: message.content }],
+      })),
+      generationConfig: {
+        maxOutputTokens: maxTokens + THINKING_HEADROOM_TOKENS,
+        thinkingConfig: { thinkingLevel: THINKING_LEVEL },
+      },
+    },
+    apiKey,
+  );
+}
+
+/** A file handed to `extractFromDocument`, base64-encoded. */
+export type FilePart = { mimeType: string; data: string };
+
+/** A one-shot extraction reply is data, not prose — give it room for a list. */
+const EXTRACTION_MAX_TOKENS = 4_000;
+
+/**
+ * Asks the model to read a document (or a plain block of text) and return
+ * whatever `prompt` asked for.
+ *
+ * Used by the Knowledge Base's file import (lib/knowledge-import.ts) to pull
+ * question-and-answer pairs out of an uploaded PDF or a conversation-shaped
+ * JSON file — never for a bot's reply, so there is no system persona and no
+ * conversation history, just one instruction and (optionally) one file.
+ */
+export async function extractFromDocument({
+  prompt,
+  filePart,
+  apiKey,
+}: {
+  prompt: string;
+  filePart?: FilePart;
+  /** This account's own key, where it has one. Falls back to the platform's. */
+  apiKey?: string | null;
+}): Promise<AiResult> {
+  return callGemini(
+    {
+      contents: [
+        {
+          role: "user",
+          parts: [...(filePart ? [{ inlineData: filePart }] : []), { text: prompt }],
+        },
+      ],
+      generationConfig: {
+        maxOutputTokens: EXTRACTION_MAX_TOKENS + THINKING_HEADROOM_TOKENS,
+        thinkingConfig: { thinkingLevel: THINKING_LEVEL },
+      },
+    },
+    apiKey,
+  );
 }

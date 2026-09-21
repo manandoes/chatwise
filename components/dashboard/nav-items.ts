@@ -50,6 +50,11 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: "BookOpen",
         comingSoon: true,
       },
+      {
+        href: "/dashboard/quick-replies",
+        label: "Quick replies",
+        icon: "MessageSquareText",
+      },
       { href: "/dashboard/campaigns", label: "Campaigns", icon: "Megaphone" },
     ],
   },

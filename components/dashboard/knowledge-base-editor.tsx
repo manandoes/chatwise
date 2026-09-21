@@ -3,12 +3,18 @@
 // Editing the answers the agent is allowed to give.
 //
 // A list of questions and answers, in plain boxes, in the owner's own words —
-// no JSON, no import format, no "schema" (docs/Rules.md §7). What is on screen
-// is exactly what the agent will read.
+// no JSON editor, no "schema" (docs/Rules.md §7). What is on screen is exactly
+// what the agent will read.
+//
+// The one exception is the file import below: it reads a .json or .pdf of past
+// conversations (lib/knowledge-import.ts) and turns it into more of these same
+// plain rows. It never saves anything on its own — the owner reviews and edits
+// the imported rows like any other row, and the existing Save button below is
+// still what actually persists them.
 
-import { AlertCircle, Check, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, Check, LoaderCircle, Plus, Trash2, Upload } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, type ChangeEvent } from "react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -37,6 +43,12 @@ function blankRow(): KnowledgeRow {
   return { key: `new-${nextKey}`, question: "", answer: "" };
 }
 
+function importedRow(entry: { question: string; answer: string }): KnowledgeRow {
+  nextKey += 1;
+
+  return { key: `imported-${nextKey}`, question: entry.question, answer: entry.answer };
+}
+
 export function KnowledgeBaseEditor({ initial }: { initial: KnowledgeRow[] }) {
   const router = useRouter();
 
@@ -47,6 +59,8 @@ export function KnowledgeBaseEditor({ initial }: { initial: KnowledgeRow[] }) {
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importNote, setImportNote] = useState<string | null>(null);
 
   function update(index: number, patch: Partial<KnowledgeRow>) {
     setRows((current) =>
@@ -66,10 +80,66 @@ export function KnowledgeBaseEditor({ initial }: { initial: KnowledgeRow[] }) {
     setJustSaved(false);
   }
 
+  async function importFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = ""; // so picking the same file again still fires onChange
+
+    if (!file) return;
+
+    setFormError(null);
+    setImportNote(null);
+    setIsImporting(true);
+
+    try {
+      const body = new FormData();
+      body.append("file", file);
+
+      const response = await fetch("/api/knowledge-base/import", {
+        method: "POST",
+        body,
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        setFormError(data?.error?.message ?? "We couldn't read that file. Try again.");
+        setIsImporting(false);
+        return;
+      }
+
+      const entries = (data?.entries ?? []) as { question: string; answer: string }[];
+      const skipped = (data?.skipped ?? 0) as number;
+
+      if (entries.length === 0) {
+        setImportNote("We couldn't find any usable answers in that file.");
+        setIsImporting(false);
+        return;
+      }
+
+      setRows((current) => [
+        // Drop a still-blank starter row rather than leaving it stranded above
+        // the imported ones — anything the owner already typed is kept.
+        ...current.filter((row) => row.question.trim() || row.answer.trim()),
+        ...entries.map(importedRow),
+      ]);
+
+      setImportNote(
+        skipped > 0
+          ? `Added ${entries.length} answer${entries.length === 1 ? "" : "s"} from your file — ${skipped} ${skipped === 1 ? "was" : "were"} skipped, they looked incomplete. Review them below, then save.`
+          : `Added ${entries.length} answer${entries.length === 1 ? "" : "s"} from your file. Review them below, then save.`,
+      );
+      setIsImporting(false);
+    } catch {
+      setFormError("We couldn't reach ChatWise. Check your connection and try again.");
+      setIsImporting(false);
+    }
+  }
+
   async function save() {
     setFormError(null);
     setFieldErrors({});
     setJustSaved(false);
+    setImportNote(null);
     setIsSaving(true);
 
     try {
@@ -117,6 +187,35 @@ export function KnowledgeBaseEditor({ initial }: { initial: KnowledgeRow[] }) {
           <AlertDescription>{formError}</AlertDescription>
         </Alert>
       )}
+
+      <div className="space-y-3 rounded-lg border border-dashed border-border bg-surface/50 p-5">
+        <div className="flex items-center gap-2">
+          <Upload className="size-4 text-text-secondary" />
+          <p className="text-small font-medium text-text-primary">
+            Import from a file
+          </p>
+        </div>
+        <p className="text-pretty text-small leading-relaxed text-text-secondary">
+          Have past WhatsApp chats written down? Upload a .json or .pdf and
+          we&apos;ll pull out the real questions and answers for you to check
+          below — nothing is saved until you press Save.
+        </p>
+        <Input
+          type="file"
+          accept=".json,.pdf,application/json,application/pdf"
+          disabled={isImporting || isSaving}
+          onChange={importFile}
+        />
+        {isImporting && (
+          <p className="flex items-center gap-2 text-small text-text-secondary">
+            <LoaderCircle className="size-4 animate-spin" />
+            Reading your file…
+          </p>
+        )}
+        {importNote && (
+          <p className="text-small text-text-secondary">{importNote}</p>
+        )}
+      </div>
 
       <div className="space-y-4">
         {rows.map((row, index) => {

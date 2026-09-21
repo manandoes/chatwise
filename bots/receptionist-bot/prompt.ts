@@ -12,11 +12,20 @@
 
 import type { BotRequest } from "../shared/handler-types.ts";
 import {
+  type AnswerLabels,
   describeBusiness,
   describeKnowledge,
   describeSetupAnswers,
   groundRules,
 } from "../shared/prompt-shared.ts";
+
+/** How this agent's setup answers are introduced to the model. */
+const ANSWER_LABELS: AnswerLabels = {
+  openingHours: "Opening hours, in the owner's own words",
+  commonQuestions: "What customers ask most often",
+  location: "Where the business is based",
+  neverAnswer: "What it should never attempt, and hand over instead",
+};
 
 /**
  * The Receptionist's full instructions for one particular business.
@@ -42,7 +51,7 @@ export function receptionistSystemPrompt(request: BotRequest): string {
     "",
     "WHAT THE OWNER TOLD US DURING SETUP",
     "",
-    describeSetupAnswers(agent.config),
+    describeSetupAnswers(agent.config, ANSWER_LABELS),
     "",
     "THE KNOWLEDGE BASE",
     "",

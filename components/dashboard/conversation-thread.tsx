@@ -13,13 +13,15 @@
 // answered by a person and then, mid-conversation, by a bot again is exactly
 // the loop docs/Rules.md §5 is about.
 
-import { LoaderCircle, Send } from "lucide-react";
+import { Check, LoaderCircle, MessageSquareText, Send, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { ThreadMessage, ThreadState } from "@/lib/conversations";
 import { formatWhen } from "@/lib/format-when";
+import type { QuickReplyRow } from "@/lib/quick-replies";
 
 /** How often an open thread re-asks what has been said. */
 const REFRESH_MS = 5_000;
@@ -30,6 +32,9 @@ export function ConversationThread({
   agentName,
   initialMessages,
   initialState,
+  initialTags,
+  initialNotes,
+  quickReplies,
 }: {
   conversationId: string;
   /** What to call the customer on screen. */
@@ -38,6 +43,9 @@ export function ConversationThread({
   agentName: string;
   initialMessages: ThreadMessage[];
   initialState: ThreadState;
+  initialTags: string[];
+  initialNotes: string;
+  quickReplies: QuickReplyRow[];
 }) {
   const [messages, setMessages] = useState(initialMessages);
   const [state, setState] = useState(initialState);
@@ -45,6 +53,7 @@ export function ConversationThread({
   const [isSending, setIsSending] = useState(false);
   const [isSwitching, setIsSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showQuickReplies, setShowQuickReplies] = useState(false);
 
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bottom = useRef<HTMLDivElement | null>(null);
@@ -225,6 +234,12 @@ export function ConversationThread({
         onChange={setWhoAnswers}
       />
 
+      <TagsAndNotes
+        conversationId={conversationId}
+        initialTags={initialTags}
+        initialNotes={initialNotes}
+      />
+
       {messages.length === 0 ? (
         <p className="text-small text-text-secondary">
           Nothing has been said in this conversation yet.
@@ -281,9 +296,53 @@ export function ConversationThread({
       <div ref={bottom} />
 
       <div className="space-y-2 rounded-lg border border-border bg-surface p-4">
-        <label htmlFor="reply" className="text-small font-medium text-text-primary">
-          Reply yourself
-        </label>
+        <div className="flex items-center justify-between gap-3">
+          <label htmlFor="reply" className="text-small font-medium text-text-primary">
+            Reply yourself
+          </label>
+
+          {quickReplies.length > 0 && (
+            <div className="relative">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowQuickReplies((open) => !open)}
+              >
+                <MessageSquareText className="size-4" />
+                Quick reply
+              </Button>
+
+              {showQuickReplies && (
+                <div className="absolute right-0 z-10 mt-1 w-72 max-w-[80vw] rounded-lg border border-border bg-surface-elevated p-1 shadow-lg">
+                  <ul className="max-h-64 overflow-y-auto">
+                    {quickReplies.map((reply) => (
+                      <li key={reply.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDraft((current) =>
+                              current ? `${current}\n${reply.body}` : reply.body,
+                            );
+                            setShowQuickReplies(false);
+                          }}
+                          className="block w-full rounded-md px-3 py-2 text-left transition-colors hover:bg-surface"
+                        >
+                          <span className="block text-small font-medium text-text-primary">
+                            {reply.title}
+                          </span>
+                          <span className="block line-clamp-1 text-xs text-text-secondary">
+                            {reply.body}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         <Textarea
           id="reply"
@@ -319,6 +378,140 @@ export function ConversationThread({
         </div>
 
         {error && <p className="text-small text-error">{error}</p>}
+      </div>
+    </div>
+  );
+}
+
+/** Tags and a private note on this thread — visible only inside the account. */
+function TagsAndNotes({
+  conversationId,
+  initialTags,
+  initialNotes,
+}: {
+  conversationId: string;
+  initialTags: string[];
+  initialNotes: string;
+}) {
+  const [tags, setTags] = useState(initialTags);
+  const [tagDraft, setTagDraft] = useState("");
+  const [notes, setNotes] = useState(initialNotes);
+  const [savedNotes, setSavedNotes] = useState(initialNotes);
+  const [isSavingNotes, setIsSavingNotes] = useState(false);
+
+  async function saveTags(next: string[]) {
+    setTags(next);
+
+    try {
+      await fetch(`/api/conversations/${conversationId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: next }),
+      });
+    } catch {
+      // The next successful save reconciles it; not worth blocking on.
+    }
+  }
+
+  function addTag() {
+    const tag = tagDraft.trim();
+
+    if (!tag || tags.includes(tag)) {
+      setTagDraft("");
+      return;
+    }
+
+    setTagDraft("");
+    void saveTags([...tags, tag]);
+  }
+
+  function removeTag(tag: string) {
+    void saveTags(tags.filter((existing) => existing !== tag));
+  }
+
+  async function saveNotes() {
+    if (notes === savedNotes) return;
+
+    setIsSavingNotes(true);
+
+    try {
+      await fetch(`/api/conversations/${conversationId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes }),
+      });
+      setSavedNotes(notes);
+    } catch {
+      // Left as a draft in the box; the next blur tries again.
+    } finally {
+      setIsSavingNotes(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-4 rounded-lg border border-border bg-surface p-4 sm:grid-cols-2">
+      <div className="space-y-2">
+        <p className="text-small font-medium text-text-primary">Tags</p>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          {tags.map((tag) => (
+            <span
+              key={tag}
+              className="inline-flex items-center gap-1 rounded-full bg-surface-elevated px-2.5 py-0.5 text-xs text-text-secondary"
+            >
+              {tag}
+              <button
+                type="button"
+                aria-label={`Remove tag ${tag}`}
+                onClick={() => removeTag(tag)}
+                className="text-text-disabled hover:text-text-primary"
+              >
+                <X className="size-3" />
+              </button>
+            </span>
+          ))}
+
+          <Input
+            value={tagDraft}
+            onChange={(event) => setTagDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addTag();
+              }
+            }}
+            onBlur={addTag}
+            placeholder="Add a tag…"
+            className="h-7 w-28 border-none bg-transparent px-1 text-xs shadow-none focus-visible:ring-0"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <label
+            htmlFor="conversation-notes"
+            className="text-small font-medium text-text-primary"
+          >
+            Internal note
+          </label>
+          {isSavingNotes ? (
+            <LoaderCircle className="size-3.5 animate-spin text-text-secondary" />
+          ) : (
+            notes === savedNotes &&
+            notes.trim() && <Check className="size-3.5 text-primary" />
+          )}
+        </div>
+
+        <Textarea
+          id="conversation-notes"
+          value={notes}
+          onChange={(event) => setNotes(event.target.value)}
+          onBlur={saveNotes}
+          placeholder="Only your team sees this — never the customer."
+          rows={2}
+          className="text-small"
+        />
       </div>
     </div>
   );

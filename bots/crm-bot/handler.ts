@@ -65,6 +65,7 @@ export async function crmHandler(
       },
     ],
     maxTokens: MAX_TOKENS,
+    apiKey: request.apiKey,
   });
 
   if (!result.ok) return { ok: false, reason: result.message };

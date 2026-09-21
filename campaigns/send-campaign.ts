@@ -34,6 +34,7 @@ import {
   isOptedOut,
   optedOutAmong,
 } from "./opt-out.ts";
+import { describeRejected, parsePhoneList } from "./phone-list.ts";
 import { personalise, unfilledPlaceholders } from "./templates/starter-templates.ts";
 import { estimatedDurationMs, planSendTimes, spacingFor } from "./throttle.ts";
 
@@ -49,6 +50,14 @@ export type NewCampaign = {
   body: string;
   /** Conversation ids, chosen from the contacts this business already has. */
   conversationIds: string[];
+  /**
+   * Numbers typed or pasted in, for people who have not messaged first.
+   *
+   * Raw text exactly as it was entered, one person per line — parsed here
+   * rather than by the caller, so the screen and the API route cannot disagree
+   * about what counts as a number (campaigns/phone-list.ts).
+   */
+  phoneList?: string | null;
   /** Which saved template this started from, if any. */
   templateId?: string | null;
   /** Set by the QR tier's warning checkbox (docs/PRD.md §7.2). */
@@ -68,6 +77,19 @@ export type BuildResult =
       finishesInMs: number;
     }
   | { ok: false; message: string; field?: string };
+
+/**
+ * One person on the list, before the campaign is written.
+ *
+ * `conversationId` is null while the recipient is a typed number nobody has a
+ * thread with yet. It stays null for exactly as long as the campaign might
+ * still be refused, so a rejected send leaves no empty conversations behind.
+ */
+type Recipient = {
+  conversationId: string | null;
+  contactPhone: string;
+  contactName: string | null;
+};
 
 /**
  * Checks a campaign and, if it passes, writes it down with a time against every
@@ -154,10 +176,15 @@ export async function buildCampaign(input: NewCampaign): Promise<BuildResult> {
     };
   }
 
-  // Recipients come from this account's own conversations, looked up with the
-  // business id in the WHERE clause — so an id belonging to somebody else
-  // simply isn't found (docs/Rules.md §3).
-  const contacts = await db.conversation.findMany({
+  // Recipients come from two places now, and every rule below this point
+  // applies to both without knowing the difference.
+  //
+  // Picked contacts are looked up with the business id in the WHERE clause, so
+  // an id belonging to somebody else simply isn't found (docs/Rules.md §3).
+  // Typed numbers are people who have never messaged this business; they are
+  // given a conversation of their own further down, once the campaign is
+  // certain to be written.
+  const picked = await db.conversation.findMany({
     where: {
       businessId: input.businessId,
       id: { in: [...new Set(input.conversationIds)] },
@@ -165,16 +192,59 @@ export async function buildCampaign(input: NewCampaign): Promise<BuildResult> {
     select: { id: true, contactPhone: true, contactName: true },
   });
 
+  const typed = parsePhoneList(input.phoneList ?? "");
+
+  // Refused, not skipped. A campaign that quietly dropped the three lines it
+  // could not read would look like it had reached everybody (docs/Rules.md §7).
+  if (typed.rejected.length > 0) {
+    return {
+      ok: false,
+      message: `These lines aren't phone numbers we can use — ${describeRejected(typed.rejected)}.`,
+      field: "recipients",
+    };
+  }
+
+  // Merged by number rather than appended, so somebody who appears in both a
+  // pasted list and the picker is one recipient and not two. The picked contact
+  // wins: its name came from WhatsApp, which is better than one typed beside
+  // the same number. (CampaignRecipient is unique on (campaignId, contactPhone)
+  // and would refuse the duplicate anyway — this is so the count on screen and
+  // the count sent are the same number.)
+  const audience = new Map<string, Recipient>();
+
+  for (const contact of picked) {
+    audience.set(contact.contactPhone, {
+      conversationId: contact.id,
+      contactPhone: contact.contactPhone,
+      contactName: contact.contactName,
+    });
+  }
+
+  for (const entry of typed.numbers) {
+    if (audience.has(entry.phone)) continue;
+
+    audience.set(entry.phone, {
+      conversationId: null,
+      contactPhone: entry.phone,
+      contactName: entry.name,
+    });
+  }
+
+  const contacts = [...audience.values()];
+
   if (contacts.length === 0) {
     return {
       ok: false,
-      message: "Choose at least one person to send this to.",
+      message: "Choose somebody to send this to, or add a phone number.",
       field: "recipients",
     };
   }
 
   const cap = capabilities.maxBulkRecipients;
 
+  // The cap counts everybody, however they got onto the list. Letting typed
+  // numbers past it would be the 25-recipient rule with a hole in it
+  // (docs/Rules.md §8).
   if (cap !== null && contacts.length > cap) {
     return {
       ok: false,
@@ -224,35 +294,26 @@ export async function buildCampaign(input: NewCampaign): Promise<BuildResult> {
     });
   }
 
-  // The API tier starts conversations with a template Meta has approved, and
-  // nothing else (docs/PRD.md §7.1). Refusing here gives a clear reason; Meta
-  // would refuse it anyway, less helpfully.
-  if (capabilities.requiresApprovedTemplates) {
-    if (!template?.metaName) {
-      return {
-        ok: false,
-        message:
-          "On the WhatsApp Business API a campaign has to use one of your approved templates. Choose one, or add it under Templates.",
-        field: "template",
-      };
-    }
+  // A campaign is no longer refused for not using an approved template, on
+  // either tier (docs/PRD.md §7.4, decided 2026-09-18). Meta is the enforcer
+  // here, not us: it accepts free text only inside the 24-hour window after
+  // somebody wrote in, and rejects it otherwise — which our stored approval
+  // status can only ever guess at, since it is a copy of what Meta said last
+  // time we looked. What used to be refused before sending is now reported
+  // afterwards, per recipient, in the words Meta itself gave
+  // (whatsapp-connectors/business-api/send-message.ts).
+  //
+  // Picking an approved template is still the way to reach somebody who has not
+  // written in, and the screens say so.
+  const sendsAsMetaTemplate = Boolean(template?.metaName);
 
-    if (template.approval !== "APPROVED") {
-      return {
-        ok: false,
-        message:
-          "That template isn't marked as approved by Meta yet, so it can't be sent.",
-        field: "template",
-      };
-    }
-  }
-
-  // Every bulk message says how to stop receiving them (docs/Rules.md §8). On
-  // the API tier the words belong to the approved template and cannot be added
-  // to here — that line is checked when the template is saved instead.
-  const finalBody = capabilities.requiresApprovedTemplates
-    ? body
-    : ensureOptOutLine(body);
+  // Every bulk message says how to stop receiving them (docs/Rules.md §8).
+  // Whether the line can be added depends on what is actually being sent, not
+  // on the tier: an approved template's words are Meta's and cannot be added to
+  // here (that line is checked when the template is saved instead), while free
+  // text is ours to complete — including API-tier free text, which before now
+  // could not happen.
+  const finalBody = sendsAsMetaTemplate ? body : ensureOptOutLine(body);
 
   const startAt =
     input.scheduledFor && input.scheduledFor.getTime() > Date.now()
@@ -261,6 +322,37 @@ export async function buildCampaign(input: NewCampaign): Promise<BuildResult> {
 
   const spacing = spacingFor(tier);
   const times = planSendTimes(sending.length, startAt, spacing);
+
+  // Typed numbers become real threads here, and not one line earlier. Every
+  // check that could still refuse this campaign has passed, so nothing above
+  // can leave a stranger sitting in the inbox having been sent nothing.
+  //
+  // `update: {}` on purpose — if a thread already exists, its name stays as it
+  // is. A name WhatsApp gave us, or one somebody typed into the inbox, must not
+  // be overwritten by whatever sat beside the number in a pasted list.
+  const addressed = await Promise.all(
+    sending.map(async (contact) => {
+      if (contact.conversationId) return { ...contact, conversationId: contact.conversationId };
+
+      const conversation = await db.conversation.upsert({
+        where: {
+          businessId_contactPhone: {
+            businessId: input.businessId,
+            contactPhone: contact.contactPhone,
+          },
+        },
+        create: {
+          businessId: input.businessId,
+          contactPhone: contact.contactPhone,
+          contactName: contact.contactName,
+        },
+        update: {},
+        select: { id: true },
+      });
+
+      return { ...contact, conversationId: conversation.id };
+    }),
+  );
 
   const campaign = await db.campaign.create({
     data: {
@@ -276,8 +368,8 @@ export async function buildCampaign(input: NewCampaign): Promise<BuildResult> {
       warningAcknowledgedAt: input.warningAcknowledged ? new Date() : null,
       scheduledFor: startAt,
       recipients: {
-        create: sending.map((contact, index) => ({
-          conversationId: contact.id,
+        create: addressed.map((contact, index) => ({
+          conversationId: contact.conversationId,
           contactPhone: contact.contactPhone,
           contactName: contact.contactName,
           body: personalise(finalBody, contact.contactName),
@@ -641,10 +733,10 @@ export type SendableContact = {
 /**
  * Everybody this business could message.
  *
- * Contacts are the people who have messaged this business — the only place
- * ChatWise gets a phone number from. There is no import, and no way to type a
- * number in, which is the strongest anti-spam property the product has: you can
- * only broadcast to people who wrote to you first.
+ * Contacts are the people who have messaged this business. They are no longer
+ * the only people a campaign can reach — an owner can type numbers in as well
+ * (docs/PRD.md §7.4) — but they are the ones worth showing a list of, because
+ * they are the ones already known to want to hear from this business.
  *
  * Opted-out contacts are returned rather than hidden, marked, and greyed out on
  * screen. Quietly dropping them would leave an owner wondering where somebody

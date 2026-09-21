@@ -39,6 +39,7 @@ export type InboxRow = {
   escalatedBy: "AGENT" | "HUMAN" | null;
   escalationReason: string | null;
   unreadCount: number;
+  tags: string[];
   /** The last thing said, whoever said it. Null on a brand-new thread. */
   preview: { body: string; fromCustomer: boolean } | null;
 };
@@ -67,9 +68,18 @@ export type ThreadState = {
  * something an inbox this size needs yet, and a screen that quietly loads
  * thousands of rows is worse than one that says what it shows.
  */
-export async function listInbox(businessId: string): Promise<InboxRow[]> {
+export async function listInbox(
+  businessId: string,
+  filter?: { tag?: string },
+): Promise<InboxRow[]> {
   const rows = await db.conversation.findMany({
-    where: { businessId },
+    where: {
+      businessId,
+      // A tag is matched exactly, case-sensitively, the way it was typed
+      // when it was added — there's no separate tag list to normalise
+      // against yet.
+      ...(filter?.tag ? { tags: { has: filter.tag } } : {}),
+    },
     orderBy: { lastMessageAt: "desc" },
     take: 100,
     select: {
@@ -81,6 +91,7 @@ export async function listInbox(businessId: string): Promise<InboxRow[]> {
       escalatedBy: true,
       escalationReason: true,
       unreadCount: true,
+      tags: true,
       messages: {
         orderBy: { createdAt: "desc" },
         take: 1,
@@ -98,6 +109,7 @@ export async function listInbox(businessId: string): Promise<InboxRow[]> {
     escalatedBy: row.escalatedBy,
     escalationReason: row.escalationReason,
     unreadCount: row.unreadCount,
+    tags: row.tags,
     preview: row.messages[0]
       ? {
           body: row.messages[0].body,
@@ -105,6 +117,22 @@ export async function listInbox(businessId: string): Promise<InboxRow[]> {
         }
       : null,
   }));
+}
+
+/**
+ * Every distinct tag this business has used, alphabetically — what the
+ * filter dropdown offers, built from what's actually on the threads rather
+ * than from a separate list somebody has to maintain.
+ */
+export async function listUsedTags(businessId: string): Promise<string[]> {
+  const rows = await db.conversation.findMany({
+    where: { businessId, tags: { isEmpty: false } },
+    select: { tags: true },
+  });
+
+  return [...new Set(rows.flatMap((row) => row.tags))].sort((a, b) =>
+    a.localeCompare(b),
+  );
 }
 
 /** One thread and everything said in it, or null if it isn't this account's. */
@@ -118,6 +146,8 @@ export async function readThread(businessId: string, id: string) {
       escalatedAt: true,
       escalatedBy: true,
       escalationReason: true,
+      tags: true,
+      notes: true,
       messages: {
         orderBy: { createdAt: "asc" },
         select: {
@@ -138,9 +168,67 @@ export async function readThread(businessId: string, id: string) {
     id: conversation.id,
     contactName: conversation.contactName,
     contactPhone: conversation.contactPhone,
+    tags: conversation.tags,
+    notes: conversation.notes,
     state: toState(conversation),
     messages: conversation.messages.map(toThreadMessage),
   };
+}
+
+/** Longest a single tag may be — long enough for a label, not a sentence. */
+export const MAX_TAG_LENGTH = 40;
+/** How many tags a thread may carry at once. */
+export const MAX_TAGS = 15;
+/** Longest a thread's internal notes may be. */
+export const MAX_NOTES_LENGTH = 5000;
+
+/** Checks and normalises a set of tags before they're saved. */
+export function checkTags(
+  value: unknown,
+): { ok: true; tags: string[] } | { ok: false; message: string } {
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+    return { ok: false, message: "Tags must be a list of words." };
+  }
+
+  const tags = [
+    ...new Set(
+      value
+        .map((tag) => tag.trim())
+        .filter((tag) => tag.length > 0 && tag.length <= MAX_TAG_LENGTH),
+    ),
+  ].slice(0, MAX_TAGS);
+
+  return { ok: true, tags };
+}
+
+/** Replaces a thread's tags with exactly this set. */
+export async function updateConversationTags(
+  businessId: string,
+  id: string,
+  tags: string[],
+): Promise<boolean> {
+  const result = await db.conversation.updateMany({
+    where: { id, businessId },
+    data: { tags },
+  });
+
+  return result.count > 0;
+}
+
+/** Saves a person's internal note on a thread. Empty text clears it. */
+export async function updateConversationNotes(
+  businessId: string,
+  id: string,
+  notes: string,
+): Promise<boolean> {
+  const trimmed = notes.trim().slice(0, MAX_NOTES_LENGTH);
+
+  const result = await db.conversation.updateMany({
+    where: { id, businessId },
+    data: { notes: trimmed || null },
+  });
+
+  return result.count > 0;
 }
 
 /**
@@ -383,6 +471,77 @@ export function checkMessageBody(
   }
 
   return { ok: true, body };
+}
+
+/**
+ * Every conversation as one row of CSV, for "export chats".
+ *
+ * Not the messages themselves — this is the thread list a person would build
+ * a spreadsheet from (who, when, tags, status), not a transcript dump. Capped
+ * the same way the inbox itself is capped.
+ */
+export async function exportConversationsCsv(businessId: string): Promise<string> {
+  const rows = await db.conversation.findMany({
+    where: { businessId },
+    orderBy: { lastMessageAt: "desc" },
+    take: 1000,
+    select: {
+      contactName: true,
+      contactPhone: true,
+      tags: true,
+      notes: true,
+      unreadCount: true,
+      escalatedAt: true,
+      escalatedBy: true,
+      lastMessageAt: true,
+      createdAt: true,
+      _count: { select: { messages: true } },
+    },
+  });
+
+  const header = [
+    "Contact name",
+    "Phone",
+    "Tags",
+    "Status",
+    "Unread",
+    "Messages",
+    "Last message at",
+    "Started at",
+    "Notes",
+  ];
+
+  const lines = rows.map((row) =>
+    [
+      row.contactName ?? "",
+      row.contactPhone,
+      row.tags.join("; "),
+      row.escalatedAt
+        ? row.escalatedBy === "HUMAN"
+          ? "Being handled by a person"
+          : "Waiting for a person"
+        : "Agent is answering",
+      String(row.unreadCount),
+      String(row._count.messages),
+      row.lastMessageAt.toISOString(),
+      row.createdAt.toISOString(),
+      row.notes ?? "",
+    ]
+      .map(csvCell)
+      .join(","),
+  );
+
+  return [header.map(csvCell).join(","), ...lines].join("\r\n");
+}
+
+function csvCell(value: string): string {
+  // Quote everything that could confuse a spreadsheet — a comma, a quote, or
+  // a newline someone put in a note.
+  if (/[",\r\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+
+  return value;
 }
 
 function toState(row: {

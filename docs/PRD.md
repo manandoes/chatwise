@@ -83,7 +83,7 @@ Notes:
 - **Conversations / Inbox** — live view of WhatsApp chats the bots are handling, with ability for a human to jump in and take over a conversation.
 - **Leads / CRM** — table of captured leads/contacts with status, score, tags (fed by Lead Qualifier + CRM agents).
 - **Connect WhatsApp** — the API-credentials form (API tier) or QR scanner (QR tier), connection health/status indicator, reconnect button.
-- **Knowledge Base** — where the business's FAQs, product catalog, policies, etc. are uploaded/edited (feeds Receptionist, Sales, Personal Shopper).
+- **Knowledge Base** — where the business's FAQs, product catalog, policies, etc. are uploaded/edited (feeds Receptionist, Sales, Personal Shopper). Can also be seeded by importing a `.json` or `.pdf` file of past conversations, which extracts suggested question/answer pairs for the owner to review before saving (`lib/knowledge-import.ts`).
 - **Campaigns / Outreach** — send a message template to a list of contacts, schedule sends, and track delivery/read/reply. Tier-limited (see §7). Includes a template library (see §7.1), contact-list segmentation, and opt-out/consent tracking.
 - **Analytics** — messages handled, response time, conversion (lead → sale), agent-by-agent breakdown.
 - **Billing** — current plan, usage against plan limits, upgrade/downgrade, invoices.

@@ -33,6 +33,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { describeRejected, parsePhoneList } from "@/campaigns/phone-list";
 import {
   personalise,
   STARTER_TEMPLATES,
@@ -85,19 +86,46 @@ export function CampaignBuilder({
   const [body, setBody] = useState("");
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [phoneList, setPhoneList] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
 
   const sendable = contacts.filter((contact) => !contact.optedOut);
-  const overCap = cap !== null && chosen.size > cap;
   const unfilled = useMemo(() => unfilledPlaceholders(body), [body]);
+
+  // The same parser the server uses (campaigns/phone-list.ts), run here only so
+  // the count and the complaints appear while somebody is still typing. What
+  // this says is never what decides — buildCampaign parses the same text again.
+  const typed = useMemo(() => parsePhoneList(phoneList), [phoneList]);
+
+  // Somebody can be in the picker *and* in a pasted list. The server merges
+  // them into one recipient, so the number shown here has to do the same or it
+  // would disagree with the cap that is actually applied.
+  const chosenPhones = new Set(
+    contacts
+      .filter((contact) => chosen.has(contact.conversationId))
+      .map((contact) => contact.contactPhone),
+  );
+
+  const addedByHand = typed.numbers.filter(
+    (entry) => !chosenPhones.has(entry.phone),
+  ).length;
+
+  const total = chosen.size + addedByHand;
+  const overCap = cap !== null && total > cap;
+
+  // How many of the picker's contacts "select all" may take. Typed numbers have
+  // already spent part of the cap, so filling it from the list alone would put
+  // the send over before anybody had done anything wrong.
+  const room =
+    cap === null ? sendable.length : Math.max(0, cap - addedByHand);
 
   // The QR tier spaces its messages out (campaigns/throttle.ts). Saying so
   // beforehand is the difference between a slow send and a broken one.
   const minutes =
-    capabilities.requiresBulkThrottle && chosen.size > 1
-      ? Math.round(((chosen.size - 1) * 45_000) / 60_000)
+    capabilities.requiresBulkThrottle && total > 1
+      ? Math.round(((total - 1) * 45_000) / 60_000)
       : 0;
 
   function toggle(contact: BuilderContact) {
@@ -119,15 +147,24 @@ export function CampaignBuilder({
     setError(null);
   }
 
+  // What is actually going out. An approved template is sent by name and its
+  // words are Meta's; anything else is free text that we finish with the
+  // unsubscribe line. Which of the two it is decides the preview, and it no
+  // longer depends on the tier — an API-tier campaign may now be free text
+  // (docs/PRD.md §7.4).
+  const sendsAsMetaTemplate = Boolean(
+    templateId && templates.find((one) => one.id === templateId)?.metaName,
+  );
+
   const blocked =
     isSending ||
-    chosen.size === 0 ||
+    total === 0 ||
     overCap ||
+    typed.rejected.length > 0 ||
     !name.trim() ||
     !body.trim() ||
     unfilled.length > 0 ||
-    (capabilities.requiresBanRiskWarning && !acknowledged) ||
-    (capabilities.requiresApprovedTemplates && !templateId);
+    (capabilities.requiresBanRiskWarning && !acknowledged);
 
   async function send() {
     setError(null);
@@ -142,6 +179,7 @@ export function CampaignBuilder({
           body,
           templateId,
           conversationIds: [...chosen],
+          phoneList,
           warningAcknowledged: acknowledged,
         }),
       });
@@ -163,10 +201,11 @@ export function CampaignBuilder({
   }
 
   const preview = personalise(
-    capabilities.requiresApprovedTemplates || body.toLowerCase().includes("unsubscribe")
+    sendsAsMetaTemplate || body.toLowerCase().includes("unsubscribe")
       ? body
       : `${body.trimEnd()}\n\n${optOutLine}`,
     contacts.find((contact) => chosen.has(contact.conversationId))?.contactName ??
+      typed.numbers.find((entry) => entry.name)?.name ??
       null,
   );
 
@@ -176,9 +215,10 @@ export function CampaignBuilder({
         <CardHeader>
           <CardTitle>What to send</CardTitle>
           <CardDescription>
-            {capabilities.requiresApprovedTemplates
-              ? "On the WhatsApp Business API, a campaign goes out as one of your Meta-approved templates."
-              : "Start from one of ours, or write your own. {name} is filled in for each person."}
+            Start from one of ours, or write your own. {"{name}"} is filled in
+            for each person.
+            {capabilities.requiresApprovedTemplates &&
+              " On the WhatsApp Business API, Meta only accepts your own wording within 24 hours of somebody messaging you — to reach anyone else, pick an approved template."}
           </CardDescription>
         </CardHeader>
 
@@ -205,9 +245,6 @@ export function CampaignBuilder({
                     key={template.id}
                     type="button"
                     onClick={() => applyTemplate(template.id, template.body, true)}
-                    disabled={
-                      capabilities.requiresApprovedTemplates && !template.usable
-                    }
                     aria-pressed={templateId === template.id}
                     className={[
                       "rounded-full border px-3 py-1.5 text-small transition-colors disabled:cursor-not-allowed disabled:opacity-50",
@@ -228,23 +265,24 @@ export function CampaignBuilder({
             </div>
           )}
 
-          {!capabilities.requiresApprovedTemplates && (
-            <div className="space-y-2">
-              <Label>Or start from one of ours</Label>
-              <div className="flex flex-wrap gap-2">
-                {STARTER_TEMPLATES.map((template) => (
-                  <button
-                    key={template.id}
-                    type="button"
-                    onClick={() => applyTemplate(template.id, template.body, false)}
-                    className="rounded-full border border-border px-3 py-1.5 text-small text-text-secondary transition-colors hover:bg-surface-elevated"
-                  >
-                    {template.name}
-                  </button>
-                ))}
-              </div>
+          {/* Shown on both tiers now. The API tier can send its own wording
+              inside Meta's 24-hour window, so a starter is a real starting
+              point there too rather than something it could never use. */}
+          <div className="space-y-2">
+            <Label>Or start from one of ours</Label>
+            <div className="flex flex-wrap gap-2">
+              {STARTER_TEMPLATES.map((template) => (
+                <button
+                  key={template.id}
+                  type="button"
+                  onClick={() => applyTemplate(template.id, template.body, false)}
+                  className="rounded-full border border-border px-3 py-1.5 text-small text-text-secondary transition-colors hover:bg-surface-elevated"
+                >
+                  {template.name}
+                </button>
+              ))}
             </div>
-          )}
+          </div>
 
           <div className="space-y-2">
             <Label htmlFor="campaign-body">The message</Label>
@@ -254,13 +292,18 @@ export function CampaignBuilder({
               onChange={(event) => setBody(event.target.value)}
               rows={5}
               placeholder="Hi {name}, …"
-              readOnly={capabilities.requiresApprovedTemplates}
             />
 
-            {capabilities.requiresApprovedTemplates && (
+            {/* Editing an approved template's words means it is no longer that
+                template, so the send stops being a template send and becomes
+                free text — which Meta only accepts inside the 24-hour window.
+                Said here rather than prevented, because inside that window it
+                is a perfectly good thing to do. */}
+            {sendsAsMetaTemplate && (
               <p className="text-xs text-text-secondary">
-                These are the words Meta approved, so they can&rsquo;t be edited
-                here. Change them in Meta, then update the template.
+                These are the words Meta approved. Edit them and this goes out
+                as your own wording instead, which Meta only accepts within 24
+                hours of somebody messaging you.
               </p>
             )}
 
@@ -278,7 +321,7 @@ export function CampaignBuilder({
               <p className="whitespace-pre-wrap rounded-lg border border-border bg-surface-elevated p-4 text-small leading-relaxed text-text-primary">
                 {preview}
               </p>
-              {!capabilities.requiresApprovedTemplates && (
+              {!sendsAsMetaTemplate && (
                 <p className="text-xs text-text-secondary">
                   We add the unsubscribe line if your message doesn&rsquo;t
                   already have one. Every bulk message needs a way out.
@@ -293,9 +336,9 @@ export function CampaignBuilder({
         <CardHeader>
           <CardTitle>Who gets it</CardTitle>
           <CardDescription>
-            People who have messaged you. You can only reach somebody who wrote
-            to you first.
-            {cap !== null && ` Up to ${cap} at a time on your connection.`}
+            Pick from the people who have messaged you, add numbers of your own,
+            or both.
+            {cap !== null && ` Up to ${cap} people in total on your connection.`}
           </CardDescription>
         </CardHeader>
 
@@ -309,13 +352,13 @@ export function CampaignBuilder({
                 setChosen(
                   new Set(
                     sendable
-                      .slice(0, cap ?? sendable.length)
+                      .slice(0, room)
                       .map((contact) => contact.conversationId),
                   ),
                 )
               }
             >
-              Select {cap === null ? "everyone" : `the first ${cap}`}
+              Select {cap === null ? "everyone" : `the first ${room}`}
             </Button>
 
             <Button
@@ -330,14 +373,17 @@ export function CampaignBuilder({
             <span
               className={`text-small ${overCap ? "text-error" : "text-text-secondary"}`}
             >
-              {chosen.size} chosen
+              {total} {total === 1 ? "person" : "people"}
+              {addedByHand > 0 &&
+                ` (${chosen.size} picked, ${addedByHand} typed in)`}
               {cap !== null && ` of ${cap} allowed`}
             </span>
           </div>
 
           {contacts.length === 0 ? (
             <p className="text-small text-text-secondary">
-              Nobody has messaged you yet, so there is nobody to send to.
+              Nobody has messaged you yet — add the numbers you want to reach
+              below.
             </p>
           ) : (
             <ul className="max-h-80 divide-y divide-border overflow-y-auto rounded-lg border border-border">
@@ -371,10 +417,45 @@ export function CampaignBuilder({
             </ul>
           )}
 
+          <div className="space-y-2 border-t border-border pt-4">
+            <Label htmlFor="campaign-numbers">Or add numbers yourself</Label>
+            <p className="text-xs text-text-secondary">
+              One person per line, with the country code. Add a name after a
+              comma to fill in {"{name}"} for them.
+            </p>
+            <Textarea
+              id="campaign-numbers"
+              value={phoneList}
+              onChange={(event) => setPhoneList(event.target.value)}
+              rows={4}
+              className="font-mono text-small"
+              placeholder={"919876543210, Priya\n+44 7700 900123"}
+            />
+
+            {typed.rejected.length > 0 && (
+              <p className="text-small text-error">
+                {describeRejected(typed.rejected)}.
+              </p>
+            )}
+
+            {/* Only worth saying once there is somebody it applies to. These
+                people never wrote in, which is the part of the list an owner
+                should think hardest about (docs/Rules.md §8). */}
+            {addedByHand > 0 && (
+              <p className="text-xs text-text-secondary">
+                {addedByHand === 1
+                  ? "This person hasn't"
+                  : `These ${addedByHand} people haven't`}{" "}
+                messaged you before. Anyone who has unsubscribed is still left
+                out automatically.
+              </p>
+            )}
+          </div>
+
           {overCap && (
             <p className="text-small text-error">
-              That&rsquo;s more than your connection allows in one send. Choose
-              at most {cap}.
+              That&rsquo;s {total} people, and your connection allows {cap} in
+              one send. Remove {total - (cap ?? 0)}.
             </p>
           )}
         </CardContent>
@@ -393,6 +474,17 @@ export function CampaignBuilder({
             <p className="max-w-[70ch] text-pretty text-small leading-relaxed text-text-primary">
               {BAN_RISK_WARNING}
             </p>
+
+            {/* The warning is about messaging people who did not ask to hear
+                from you, and typing a number in is the way to do exactly that.
+                Naming it is the honest thing to do at the point of sending. */}
+            {addedByHand > 0 && (
+              <p className="max-w-[70ch] text-pretty text-small font-medium leading-relaxed text-warning">
+                {addedByHand} of these {total} people never messaged you. That
+                is the send most likely to get a number banned — only continue
+                if they gave you their number and expect to hear from you.
+              </p>
+            )}
 
             <label className="flex cursor-pointer items-start gap-3">
               <input

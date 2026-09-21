@@ -27,6 +27,8 @@ import { HISTORY_LIMIT } from "../bots/shared/prompt-shared.ts";
 import type { BotType } from "../bots/shared/config-types.ts";
 import { db } from "../lib/db.ts";
 import { isAiConfigured } from "../lib/ai-client.ts";
+import { decryptStoredKey } from "../lib/ai-credentials.ts";
+import { isOpenNow, readBusinessHours } from "../lib/business-hours.ts";
 import { applyAgentUpdate, readLeadSnapshot } from "../lib/leads.ts";
 import { checkMessageQuota } from "../lib/usage.ts";
 import {
@@ -137,6 +139,7 @@ async function route(
           about: true,
           timezone: true,
           onboardingCompletedAt: true,
+          geminiApiKey: true,
           agent: true,
         },
       },
@@ -267,6 +270,14 @@ async function route(
 
   const agent = business.agent;
 
+  // Whose key this account's agents think on: its own if it has set one, and
+  // the platform's if it hasn't (lib/ai-credentials.ts). Decrypted once here
+  // rather than per agent, since the CRM agent runs alongside the one that
+  // replies.
+  const apiKey = business.geminiApiKey
+    ? decryptStoredKey(business.geminiApiKey)
+    : null;
+
   // The thread as an agent sees it. Built on demand, because it costs two more
   // queries and there are messages that never reach an agent at all.
   const buildRequest = async (): Promise<BotRequest> => ({
@@ -288,6 +299,7 @@ async function route(
     history: await readHistory(conversation.id),
     message: text,
     contactName: conversation.contactName,
+    apiKey,
   });
 
   if (conversation.escalatedAt) {
@@ -310,6 +322,27 @@ async function route(
       reason: "waiting for a person",
       conversationId: conversation.id,
     };
+  }
+
+  // Outside business hours, if the owner has set any.
+  //
+  // Checked before the quota and before the agent thinks about anything, for
+  // the same reason quota is checked early: there is no point spending a
+  // model call on a reply the account has decided not to send right now. The
+  // customer gets one courtesy message and the thread waits for a person,
+  // exactly like any other handover (docs/Rules.md §5).
+  const hours = await readBusinessHours(business.id);
+  const openNow = isOpenNow(hours, business.timezone);
+
+  if (!openNow.open) {
+    return await respond(
+      {
+        kind: "escalate",
+        text: openNow.awayMessage,
+        reason: "Outside business hours.",
+      },
+      { conversation, connection, contactPhone, botType: null, deliver },
+    );
   }
 
   // Out of messages for the month.
@@ -418,7 +451,7 @@ async function keepTheCrmUpToDate(
 ) {
   // No key, no CRM agent — and no second complaint in the logs about it, since
   // whichever agent just replied has already said so.
-  if (!isAiConfigured()) return;
+  if (!isAiConfigured(request.apiKey)) return;
 
   // The Internal agent answers the business's own staff, not its customers
   // (docs/PRD.md §5, row 9). A CRM record is a customer record, and filling the

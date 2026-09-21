@@ -13,13 +13,14 @@ import { unexpectedError } from "@/lib/api-response";
 import { requireApiBusiness } from "@/lib/auth";
 import { listInbox } from "@/lib/conversations";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const found = await requireApiBusiness();
 
     if (!found.ok) return found.response;
 
-    const conversations = await listInbox(found.businessId);
+    const tag = new URL(request.url).searchParams.get("tag")?.trim() || undefined;
+    const conversations = await listInbox(found.businessId, { tag });
 
     return Response.json({
       conversations,

@@ -113,6 +113,17 @@ model Business {
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
+  /// The business's own Gemini API key, AES-256-GCM ciphertext (see
+  /// lib/encryption.ts). Null means "use the platform's own GEMINI_API_KEY".
+  /// Never sent to the browser — Settings only ever says whether one is set.
+  geminiApiKey Bytes?
+
+  /// Privacy: shows the contact's number to whoever is reading the inbox only
+  /// in masked form (e.g. "+91••••••789"), rather than in full. Off by
+  /// default, because most accounts are a single owner who already knows
+  /// their own customers' numbers.
+  maskContactPhone Boolean @default(false)
+
   agent            AgentInstance?
   connection       WhatsAppConnection?
   conversations    Conversation[]
@@ -122,6 +133,8 @@ model Business {
   campaigns        Campaign[]
   optOuts          OptOut[]
   subscription     Subscription?
+  quickReplies     QuickReply[]
+  businessHours    BusinessHours?
 
   @@map("businesses")
 }
@@ -396,6 +409,16 @@ model Conversation {
   /// be a hundred more (docs/Rules.md §4 — the dashboard has to stay quick to
   /// be worth watching).
   unreadCount Int @default(0)
+
+  /// Short labels a person put on this thread, e.g. "vip", "billing
+  /// question". Free text, not tied to any other list — the inbox filters and
+  /// exports by whatever is actually here.
+  tags String[] @default([])
+
+  /// A person's own notes about this thread — visible only inside this
+  /// account, never sent to the customer. Distinct from `Lead.notes`: a
+  /// conversation exists before any lead does, so this is always available.
+  notes String? @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -795,6 +818,67 @@ model OptOut {
   @@unique([businessId, contactPhone])
   @@index([businessId, createdAt])
   @@map("opt_outs")
+}
+
+// ─── Team inbox conveniences ────────────────────────────────────────────────
+// Small, single-account features that make the inbox faster to work in day to
+// day. They don't touch who is allowed to see what — ChatWise remains one
+// account, one inbox — they just save typing and reduce noise.
+
+/// A saved reply a person can drop into any conversation instead of typing it
+/// out again — "Thanks, we're looking into it", a standard opening line, etc.
+model QuickReply {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  /// What it's called in the picker, e.g. "Opening line".
+  title String
+  /// What actually gets sent, placeholders and all — inserted as typed, never
+  /// auto-filled, so nothing about the flow the agent already uses to fill in
+  /// {name} is duplicated here.
+  body  String @db.Text
+
+  /// The order a person arranged them in.
+  position Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([businessId, position])
+  @@map("quick_replies")
+}
+
+/// One business's working hours and what happens outside them.
+///
+/// One row per business — an account has one inbox and one schedule for it,
+/// the same shape as `AgentInstance` and `WhatsAppConnection` above.
+model BusinessHours {
+  id         String   @id @default(cuid())
+  businessId String   @unique
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  /// Off by default: every account answers around the clock until an owner
+  /// deliberately narrows that.
+  enabled Boolean @default(false)
+
+  /// One entry per weekday (0 = Sunday … 6 = Saturday). A day missing from
+  /// this map, or present with `closed: true`, is treated as closed. Kept as
+  /// JSON rather than seven columns because the shape — "a start and an end
+  /// per day" — has no reason to ever need a migration of its own.
+  ///
+  /// Example: {"1": {"open": "09:00", "close": "18:00"}, "2": {...}}
+  schedule Json @default("{}")
+
+  /// What the customer is told when they write in outside these hours. The
+  /// agent still stays quiet after this the same way any handover does — this
+  /// is a courtesy reply, not a fresh reason to keep answering.
+  awayMessage String @default("Thanks for your message! We're outside business hours right now, but we'll get back to you as soon as we're back.") @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("business_hours")
 }
 
 // ─── Billing (Phase 13) ─────────────────────────────────────────────────────

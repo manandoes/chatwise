@@ -34,6 +34,7 @@ export async function POST(request: Request) {
       name?: unknown;
       body?: unknown;
       conversationIds?: unknown;
+      phoneList?: unknown;
       templateId?: unknown;
       warningAcknowledged?: unknown;
       scheduledFor?: unknown;
@@ -55,6 +56,9 @@ export async function POST(request: Request) {
       name: typeof body?.name === "string" ? body.name : "",
       body: typeof body?.body === "string" ? body.body : "",
       conversationIds,
+      // Passed through as typed. What counts as a phone number is decided in
+      // campaigns/phone-list.ts, so this route and the screen cannot disagree.
+      phoneList: typeof body?.phoneList === "string" ? body.phoneList : null,
       templateId: typeof body?.templateId === "string" ? body.templateId : null,
       warningAcknowledged: body?.warningAcknowledged === true,
       scheduledFor: when && !Number.isNaN(when.getTime()) ? when : null,

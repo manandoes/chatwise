@@ -53,6 +53,14 @@ export type BotRequest = {
   message: string;
   /** Whatever name WhatsApp reports for them, if any. */
   contactName: string | null;
+  /**
+   * This business's own AI key, where it has set one (lib/ai-credentials.ts).
+   * Null means the platform's own key answers for them.
+   *
+   * Not part of `business` above: it is how the agent is paid for, not
+   * something any prompt should ever read or repeat.
+   */
+  apiKey: string | null;
 };
 
 /**

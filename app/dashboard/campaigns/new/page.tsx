@@ -1,11 +1,12 @@
 // Writing a new campaign.
 //
-// The page fetches; components/dashboard/campaign-builder.tsx decides. What is
-// worth noticing here is where the contacts come from: this account's own
-// conversations, and nowhere else. There is no import, and no box to type a
-// phone number into. You can only broadcast to somebody who messaged you first,
-// which is the strongest thing the product does to keep its customers out of
-// trouble (docs/Rules.md §8).
+// The page fetches; components/dashboard/campaign-builder.tsx decides. The list
+// below is this account's own conversations — the people who have messaged it.
+// Since 2026-09-18 an owner can also type numbers in for people who never have
+// (docs/PRD.md §7.4), which is why the builder takes a pasted list as well as a
+// picker. That widened the audience; it did not soften anything else, and the
+// cap, throttle, opt-out checks and ban-risk warning all still count everybody
+// on the list the same way (docs/Rules.md §8).
 
 import type { Metadata } from "next";
 import Link from "next/link";

@@ -41,6 +41,7 @@ export async function askAgent({
   const result = await generateReply({
     system,
     messages: historyAsMessages(request.history, request.message),
+    apiKey: request.apiKey,
   });
 
   if (!result.ok) {

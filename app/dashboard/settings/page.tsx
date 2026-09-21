@@ -7,7 +7,10 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { AiKeyForm } from "@/components/dashboard/ai-key-form";
+import { BusinessHoursForm } from "@/components/dashboard/business-hours-form";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { PrivacySettingsForm } from "@/components/dashboard/privacy-settings-form";
 import {
   Card,
   CardContent,
@@ -16,6 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { requireUser } from "@/lib/auth";
+import { readBusinessHours } from "@/lib/business-hours";
 import { db } from "@/lib/db";
 
 export const metadata: Metadata = {
@@ -41,6 +45,16 @@ export default async function SettingsPage() {
   // The session cookie outlived the account it points at — e.g. the account was
   // deleted while the browser still had a valid cookie.
   if (!user) notFound();
+
+  // Whether this account has its own AI key, and nothing more — the key itself
+  // never leaves the server (docs/Rules.md §3). Null here means setup hasn't
+  // created the business row yet, which reads the same as having no key.
+  const business = await db.business.findUnique({
+    where: { userId: sessionUser.id },
+    select: { id: true, geminiApiKey: true, maskContactPhone: true },
+  });
+
+  const businessHours = business ? await readBusinessHours(business.id) : null;
 
   const signInMethods = [
     ...(user.passwordHash ? ["Email and password"] : []),
@@ -82,6 +96,17 @@ export default async function SettingsPage() {
         </CardContent>
       </Card>
 
+      <AiKeyForm hasKey={Boolean(business?.geminiApiKey)} />
+
+      {businessHours && (
+        <BusinessHoursForm
+          initialEnabled={businessHours.enabled}
+          initialSchedule={businessHours.schedule}
+          initialAwayMessage={businessHours.awayMessage}
+        />
+      )}
+
+      <PrivacySettingsForm initialMasked={Boolean(business?.maskContactPhone)} />
     </div>
   );
 }

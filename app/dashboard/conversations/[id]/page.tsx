@@ -18,6 +18,8 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { requireUser } from "@/lib/auth";
 import { readThread } from "@/lib/conversations";
 import { getOnboardingState } from "@/lib/onboarding";
+import { maskPhone } from "@/lib/phone-mask";
+import { listQuickReplies } from "@/lib/quick-replies";
 
 export const metadata: Metadata = { title: "Conversation" };
 
@@ -30,12 +32,18 @@ export default async function ConversationPage({
   const user = await requireUser();
   const { business, bot } = await getOnboardingState(user.id);
 
-  const conversation = await readThread(business.id, id);
+  const [conversation, quickReplies] = await Promise.all([
+    readThread(business.id, id),
+    listQuickReplies(business.id),
+  ]);
 
   if (!conversation) notFound();
 
-  const who =
-    conversation.contactName?.trim() || `+${conversation.contactPhone}`;
+  const shownPhone = business.maskContactPhone
+    ? maskPhone(conversation.contactPhone)
+    : `+${conversation.contactPhone}`;
+
+  const who = conversation.contactName?.trim() || shownPhone;
 
   // The customer calls it by what it does, not by "the bot" (docs/Rules.md §7).
   const agentName = bot ? `Your ${bot.name}` : "Your agent";
@@ -54,11 +62,7 @@ export default async function ConversationPage({
 
       <PageHeader
         title={who}
-        description={
-          conversation.contactName?.trim()
-            ? `+${conversation.contactPhone}`
-            : "On WhatsApp"
-        }
+        description={conversation.contactName?.trim() ? shownPhone : "On WhatsApp"}
       />
 
       <ConversationThread
@@ -67,6 +71,9 @@ export default async function ConversationPage({
         agentName={agentName}
         initialMessages={conversation.messages}
         initialState={conversation.state}
+        initialTags={conversation.tags}
+        initialNotes={conversation.notes ?? ""}
+        quickReplies={quickReplies}
       />
     </div>
   );

@@ -709,6 +709,28 @@ Per docs/Rules.md §10 — all of these need the product owner's confirmation.
 68. **Busiest times of day, and usage against plan limits, are not built.** The
     Phase 11 placeholder screen had promised both. The first is not in
     docs/Phases.md; the second needs plan limits, which are Phase 13.
+69. **The Knowledge Base can now be seeded from a `.json` or `.pdf` file of past
+    conversations** (`lib/knowledge-import.ts`, `POST /api/knowledge-base/import`),
+    at the product owner's explicit request. This knowingly supersedes the Phase 7
+    decision recorded at the top of `lib/knowledge-base.ts` ("no uploads, no
+    embeddings, no search index") — the supersession is narrow: extraction still
+    lands as ordinary rows in the same `KnowledgeEntry` table, nothing new is
+    stored, and nothing is written to the database until the owner presses the
+    existing Save button. Two things were decided without the owner in the room
+    and should get an explicit yes/no:
+    - **Word/DOCX import was dropped.** Reading it needs a library (`mammoth`);
+      offered as a choice, the answer was to skip it rather than add the
+      dependency. JSON and PDF only.
+    - **PDF text extraction reuses the already-integrated Gemini API**
+      (`extractFromDocument` in `lib/ai-client.ts`) instead of adding a
+      `pdf-parse` dependency, per docs/Rules.md §1. This means PDF import needs
+      `GEMINI_API_KEY` to be set, costs one extra model call per upload, and is
+      not deterministic the way a dedicated parser would be — traded off against
+      not adding a new dependency for something Gemini can already read. This is
+      unrelated to assumption 40/the "documents are handed to a person" open
+      question above: that one is about a *customer* sending a file mid-conversation
+      on WhatsApp, which still goes straight to a human untouched; this is the
+      *owner* uploading a file in the dashboard to seed their own Knowledge Base.
 
 15. **Google and password sign-ins are not auto-linked.** If someone signs up
     with a password and later clicks "Continue with Google" using the same
@@ -1969,6 +1991,42 @@ that is an argument rather than a look.
 - **Still not proven:** the same thing as before, one provider later. No Gemini
   key has been used against the live API from this codebase, so no agent in this
   repo has produced a real reply from a real model - only from the stub.
+
+---
+
+## Session Update — 2026-09-13 (Knowledge Base import + Receptionist labels)
+
+- **Worked on:** two of three things the product owner asked for directly —
+  making sure each agent's setup questions are enough to answer accurately, and
+  letting an owner seed the Knowledge Base from a file of past conversations.
+  The third ask (garbage input shouldn't break a bot) turned out to already be
+  true everywhere except the new import path, which was built to match.
+- **Completed:**
+  - Audited every one of the nine `config-schema.ts` files against its own
+    `prompt.ts`. Found exactly one real gap: `bots/receptionist-bot/prompt.ts`
+    was the only bot calling `describeSetupAnswers` without an `ANSWER_LABELS`
+    map, so its setup answers reached the model as raw camelCase keys instead of
+    a labelled sentence like the other eight bots. Fixed; no other schema
+    needed a new question — the existing ones already match what each prompt
+    references, and docs/Rules.md's own "long surveys go unanswered" reasoning
+    argues against padding them further.
+  - Built the Knowledge Base file import: `lib/knowledge-import.ts`
+    (`parseUploadedKnowledge`), `POST /api/knowledge-base/import`, and a new
+    "Import from a file" control in `components/dashboard/knowledge-base-editor.tsx`.
+    It only returns candidate rows — nothing is written to the database until
+    the owner presses the existing Save button, so the existing quota/length
+    checks in `lib/knowledge-base.ts` still get the final say.
+  - `lib/ai-client.ts` gained `extractFromDocument` (used for PDF and for
+    conversation-shaped JSON) alongside the existing `generateReply`, sharing a
+    new private `callGemini` helper so the timeout/error/logging behaviour
+    stays in one place rather than being copied.
+- **New decisions:** assumption 69 — Word/DOCX import was offered and declined
+  (would need `mammoth`); PDF import reuses Gemini instead of adding
+  `pdf-parse`. Both need an eventual yes/no from the product owner, same as
+  every other assumption in this section.
+- **Anything broken:** no. This session did not run the build/lint/typecheck
+  itself — do that before treating this as verified, per the plan's own
+  verification section.
 
 ---
 

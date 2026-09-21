@@ -62,6 +62,15 @@ export type TierCapabilities = {
    * tier it is a named, approved object at Meta with variables; on the QR tier
    * it is ordinary text we fill in and send. Anything storing templates has to
    * handle both shapes (see docs/Memory.md).
+   *
+   * **This describes Meta's rule; it is no longer a gate of ours.** Campaigns
+   * stopped refusing a free-text API-tier send on 2026-09-18 (docs/PRD.md
+   * §7.4): Meta accepts free text inside the 24-hour window after somebody
+   * writes in and rejects it outside, and our stored approval status is a copy
+   * of what Meta said last time we looked rather than the truth at send time.
+   * So the templates screens still read this to say what Meta expects, and the
+   * campaign builder reads it to warn — but what would once have been a refusal
+   * is now Meta's own reason, shown against the recipient it happened to.
    */
   requiresApprovedTemplates: boolean;
 

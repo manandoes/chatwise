@@ -8,6 +8,7 @@ import {
   CreditCard,
   LayoutDashboard,
   Megaphone,
+  MessageSquareText,
   MessagesSquare,
   Settings,
   Smartphone,
@@ -26,6 +27,7 @@ const ICONS: Record<string, LucideIcon> = {
   BarChart3,
   CreditCard,
   Settings,
+  MessageSquareText,
 };
 
 export function NavIcon({
