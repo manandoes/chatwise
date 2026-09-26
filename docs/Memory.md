@@ -2030,6 +2030,62 @@ that is an argument rather than a look.
 
 ---
 
+## Session Update — 2026-09-26 (CRM & integrations: foundation, segments, Shopify)
+
+- **Worked on:** the CRM & integrations build (Shopify, payment links, CRM
+  screens, Sheets, Calendly, team inbox, AI features — full list and the
+  product owner's decisions are in the commit messages of bf8688d onwards).
+- **Completed:**
+  - Foundation (bf8688d): the `Contact` table and every new table for every
+    phase in one migration, team members, consent log, the Postgres job
+    queue, automated messages, feature flags.
+  - `lib/segments.ts` (the filter language), `lib/tag-rules.ts`,
+    `lib/catalog.ts` + `embedText` in `lib/ai-client.ts`.
+  - The Shopify connector end to end: install/callback, webhooks, GDPR
+    topics, webhook registration, paginated history import, abandoned-cart
+    reminders, and Dashboard → Integrations.
+  - The `crm_integrations` migration was regenerated (now
+    `20260926122542_crm_integrations`) to include `MessageAuthor.AUTOMATION`
+    and `Message.sentById`. **It has not been applied to Supabase yet**
+    (checked with `prisma migrate status`); run `npm run db:deploy` when
+    ready. Supabase ships pgvector, which the migration enables.
+- **Verified:** typecheck, lint; the backfill against seeded legacy data;
+  24 segment/tag-rule checks and 27 end-to-end Shopify checks (signed
+  webhooks against `next dev`, jobs run through the real runner) on a local
+  `pgvector/pgvector:pg16` Docker container.
+- **Not verified:** calls to a real Shopify store (webhook registration,
+  history import paging, token revoke) — no test store was available.
+- **In progress / left off at:** payment links are next, then CRM screens,
+  Sheets, Calendly, team inbox + analytics funnel, AI features.
+
+### Decisions and assumptions (please confirm)
+
+- **Shopify scopes are read-only** (`read_orders`, `read_customers`,
+  `read_products`). The earlier draft also asked for `write_orders`, which
+  nothing uses.
+- **A store belongs to one ChatWise account.** Connecting a store another
+  account holds is refused. An account with a *disconnected* store may connect
+  a different one; the old store row is dropped (its orders stay, unlinked).
+- **Disconnect/uninstall keeps the CRM history** (contacts, orders, products)
+  and wipes only the token. Shopify's `shop/redact` (48 hours after an
+  uninstall) erases everything that came from the store.
+- **`customers/redact`** deletes that customer's orders and checkouts from the
+  store. The contact itself is deleted only if they never talked to the
+  business on WhatsApp; otherwise their email and Shopify id are cleared and
+  the conversation stays, as the business's own record.
+- **Shopify's marketing consent only ever raises `PENDING` to `OPTED_IN`.**
+  Someone who said STOP on WhatsApp stays opted out whatever the store says.
+- **The history import sends nobody a message** and runs auto-tag rules once
+  at the end.
+- **Product embeddings use the account's own Gemini key when it has one**,
+  else the platform key. Price and stock are left out of the embedded text
+  (they change often and are read live).
+- **Shopify's "protected customer data" approval** is needed for the app to
+  read phone numbers on a public app; this is a Shopify Partner-dashboard
+  step for the product owner, not code.
+
+---
+
 ## Session Update — [DATE]
 - Worked on:
 - Completed:

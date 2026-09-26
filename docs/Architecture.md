@@ -252,6 +252,15 @@ Designed so a non-technical person can open the file tree and understand what's 
 │   ├── subscription.ts                 #   Which plan an account is on, and how that changes
 │   ├── usage.ts                        #   What has been used this period, counted from real
 │   │                                   #   rows, and whether any more is allowed
+│   ├── contacts.ts                     #   The CRM contact, deduped on phone — every source
+│   │                                   #   (WhatsApp, Shopify, imports) arrives through here
+│   ├── consent.ts                      #   Opt-in/opt-out: Contact, OptOut and the audit log in step
+│   ├── segments.ts                     #   The saved-filter language, as a query and in words
+│   ├── tag-rules.ts                    #   Auto-tags: added and removed by rules; manual tags kept
+│   ├── catalog.ts                      #   Products + meaning-based search (pgvector)
+│   ├── automations.ts                  #   Every automated WhatsApp message goes out through here
+│   ├── jobs.ts                         #   Putting background work on the queue
+│   ├── features.ts                     #   Which integrations are switched on; the public app URL
 │   ├── generated/prisma/               #   Generated Prisma Client — git-ignored, rebuilt by
 │   │                                   #   `prisma generate`. Never edit by hand.
 │   └── validation/                     #   Form/schema validation
@@ -265,8 +274,22 @@ Designed so a non-technical person can open the file tree and understand what's 
 │   ├── schema.prisma                   #   Database structure — the source of truth for data model
 │   └── migrations/
 │
+├── integrations/                       # Outside services other than WhatsApp. One folder per
+│   │                                   #   service; nothing else calls that service directly
+│   └── shopify/
+│       ├── client.ts                   #     OAuth + webhook signature checks, the paced Admin API
+│       ├── oauth-state.ts              #     The cookie that ties Shopify's redirect to this browser
+│       ├── connect.ts                  #     Connect / disconnect, webhook registration, the
+│       │                               #     history import, and Shopify's privacy requests
+│       └── sync.ts                     #     What each webhook does: orders, checkouts (abandoned
+│                                       #     carts), customers, products
+│
 ├── jobs/                               # Background work, run by the always-on host
 │   ├── campaign-sender.ts              #   Ticks every 15s and sends whatever is due
+│   ├── pending-job-runner.ts           #   Empties the `pending_jobs` queue: retries with
+│   │                                   #     backoff, never re-runs an interrupted send
+│   ├── job-handlers.ts                 #   Which code runs for which kind of job
+│   ├── recurring-jobs.ts               #   Clock-driven jobs (daily auto-tags, reminders…)
 │   ├── follow-up-scheduler.ts          #   (not built yet)
 │   └── reconnect-checker.ts            #   (not built yet)
 │                                       #   There is deliberately no usage-billing-sync:
@@ -653,6 +676,32 @@ in there produces no CSS and fails completely silently — those hover states
 simply never happened, and nothing anywhere said so. All nine now use
 `surface-elevated`, which is the token that exists, and the Phase 14 checks
 compare every colour used against the theme so it cannot come back.
+
+## 5h. How the integrations run (built 2026-09-26)
+
+Shopify (and later Razorpay/Stripe payment links, Google Sheets and Calendly)
+follow one pattern, so each new integration is the same shape:
+
+1. **A public webhook route checks the signature first**, on the raw body, and
+   refuses anything unsigned. Then it records the delivery in
+   `IntegrationEvent` (unique on the provider's own id, so a re-sent webhook is
+   dropped) and queues a `PendingJob` — both in one transaction — and answers
+   200 within the provider's few-second deadline.
+2. **The job runner does the work** (`jobs/pending-job-runner.ts`, on the
+   always-on host or via `/api/cron/jobs`). Writes are upserts on the
+   provider's ids, so processing the same event twice changes nothing.
+3. **Webhooks never send WhatsApp messages.** They queue an
+   `automation.send` job under a dedupe key, and `lib/automations.ts` applies
+   every rule — switched on, not opted out, plan quota, and on the Business API
+   the 24-hour window vs an approved template.
+4. **Every row is scoped by `businessId`**, taken from the session or from the
+   integration's own row (e.g. `Shop`), never from the payload.
+5. **Tokens are encrypted** with `lib/encryption.ts`, handled decrypted only
+   inside the integration's `client.ts`, and never logged.
+
+Every integration is behind a `FEATURE_*` flag (lib/features.ts), off by
+default. Failed jobs and Shopify privacy requests are listed on
+Dashboard → Integrations for the owner to see.
 
 ## 6. Environment & Deployment Notes
 
