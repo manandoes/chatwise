@@ -26,8 +26,11 @@ export function shopifyApiVersion(): string {
   return process.env.SHOPIFY_API_VERSION || "2026-07";
 }
 
-/** The scopes ChatWise asks a store for. */
-export const SHOPIFY_SCOPES = ["read_orders", "read_customers", "read_products", "write_orders"];
+/**
+ * The scopes ChatWise asks a store for — read-only, because nothing here
+ * changes anything in the store. Checkout webhooks come under read_orders.
+ */
+export const SHOPIFY_SCOPES = ["read_orders", "read_customers", "read_products"];
 
 export function isShopifyConfigured(): boolean {
   return Boolean(process.env.SHOPIFY_API_KEY && process.env.SHOPIFY_API_SECRET);
@@ -156,12 +159,15 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// A plain field rather than a `readonly status` constructor parameter: the
+// always-on host runs this file with Node's type stripping, which can't
+// compile TypeScript-only syntax like parameter properties.
 export class ShopifyApiError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
+  status: number;
+
+  constructor(message: string, status: number) {
     super(message);
+    this.status = status;
   }
 }
 

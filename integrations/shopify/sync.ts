@@ -113,7 +113,7 @@ export async function processShopifyWebhook(
       return handleCheckout(shop, payload as ShopifyCheckout);
     case "customers/create":
     case "customers/update":
-      return handleCustomer(shop, payload as ShopifyCustomer);
+      return syncCustomer(shop, payload);
     case "products/create":
     case "products/update":
       await upsertShopifyProduct(shop, payload);
@@ -201,7 +201,17 @@ async function applyShopifyConsent(businessId: string, contactId: string, accept
   await setConsent({ businessId, contactId, to: "OPTED_IN", source: "shopify", detail });
 }
 
-async function handleCustomer(shop: ShopRow, customer: ShopifyCustomer): Promise<string> {
+/**
+ * Saves a Shopify customer as a contact, with their store tags and marketing
+ * consent. The import passes `evaluateRules: false` and runs the rules once
+ * at the end instead of once per customer.
+ */
+export async function syncCustomer(
+  shop: ShopRow,
+  payload: Record<string, unknown>,
+  options: { evaluateRules?: boolean } = {},
+): Promise<string> {
+  const customer = payload as ShopifyCustomer;
   const contactId = await contactForCustomer(shop, customer);
 
   if (!contactId) return "customer has no phone number";
@@ -216,7 +226,8 @@ async function handleCustomer(shop: ShopRow, customer: ShopifyCustomer): Promise
     customer.accepts_marketing === true;
 
   await applyShopifyConsent(shop.businessId, contactId, accepted, "customer marketing consent");
-  await evaluateRulesForContact(shop.businessId, contactId);
+
+  if (options.evaluateRules !== false) await evaluateRulesForContact(shop.businessId, contactId);
 
   return "contact synced";
 }

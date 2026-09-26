@@ -11,6 +11,15 @@ import "server-only";
 
 import type { AutomationKind } from "../lib/generated/prisma/client.ts";
 import { sendAutomatedMessage } from "../lib/automations.ts";
+import { embedProduct } from "../lib/catalog.ts";
+import { businessesWithRules, evaluateAllRules } from "../lib/tag-rules.ts";
+import {
+  handleComplianceRequest,
+  loadActiveShop,
+  registerWebhooks,
+  runBackfillPage,
+} from "../integrations/shopify/connect.ts";
+import { processShopifyWebhook, sendAbandonedCartReminder } from "../integrations/shopify/sync.ts";
 
 export type JobContext = {
   id: string;
@@ -60,7 +69,116 @@ export const automationSendHandler: JobHandler = {
   },
 };
 
+// ─── Shopify ────────────────────────────────────────────────────────────────
+//
+// Everything below is safe to repeat: writes are upserts on Shopify's own ids,
+// and any message is itself a separate `automation.send` job queued under a
+// dedupe key, so a re-run queues nothing new.
+
+/** One webhook, queued by app/api/shopify/webhooks. Payload: { topic, body }. */
+const shopifyWebhookHandler: JobHandler = {
+  safeToRepeat: true,
+  async run(job) {
+    const shop = await loadActiveShop(job.shopId);
+
+    if (!shop) return { status: "done", note: "The store is disconnected." };
+
+    const note = await processShopifyWebhook(
+      { id: shop.id, businessId: shop.businessId, shopDomain: shop.shopDomain, active: true },
+      String(job.payload.topic ?? ""),
+      (job.payload.body ?? {}) as Record<string, unknown>,
+    );
+
+    return { status: "done", note };
+  },
+};
+
+/** Payload: { checkoutId }. */
+const abandonedCartHandler: JobHandler = {
+  safeToRepeat: true,
+  async run(job) {
+    if (!job.businessId) return { status: "failed", error: "No business on this job." };
+
+    const result = await sendAbandonedCartReminder(job.businessId, String(job.payload.checkoutId ?? ""));
+
+    return { status: "done", note: result.reason };
+  },
+};
+
+const registerWebhooksHandler: JobHandler = {
+  safeToRepeat: true,
+  async run(job) {
+    return { status: "done", note: await registerWebhooks(job.shopId) };
+  },
+};
+
+const backfillHandler: JobHandler = {
+  safeToRepeat: true,
+  async run(job) {
+    return { status: "done", note: await runBackfillPage(job.shopId, job.payload) };
+  },
+};
+
+/** Payload: { requestId, customerId }. */
+const complianceHandler: JobHandler = {
+  safeToRepeat: true,
+  async run(job) {
+    const customerId = job.payload.customerId ? String(job.payload.customerId) : null;
+
+    return { status: "done", note: await handleComplianceRequest(String(job.payload.requestId ?? ""), customerId) };
+  },
+};
+
+// ─── CRM ────────────────────────────────────────────────────────────────────
+
+/** Indexes one product for search. Payload: { productId }. */
+const catalogEmbedHandler: JobHandler = {
+  safeToRepeat: true,
+  async run(job) {
+    if (!job.businessId) return { status: "failed", error: "No business on this job." };
+
+    const result = await embedProduct(job.businessId, String(job.payload.productId ?? ""));
+
+    if (result === "retry") return { status: "retry", error: "The AI provider is busy." };
+    if (result === "failed") return { status: "failed", error: "The AI provider couldn't index this product." };
+
+    return { status: "done" };
+  },
+};
+
+/** Re-applies one business's auto-tag rules, after a rule was saved. */
+const evaluateRulesHandler: JobHandler = {
+  safeToRepeat: true,
+  async run(job) {
+    if (!job.businessId) return { status: "failed", error: "No business on this job." };
+
+    await evaluateAllRules(job.businessId);
+
+    return { status: "done" };
+  },
+};
+
+/** The daily sweep: relative dates ("no order for 60 days") drift overnight. */
+const evaluateAllRulesHandler: JobHandler = {
+  safeToRepeat: true,
+  async run() {
+    const businessIds = await businessesWithRules();
+
+    for (const businessId of businessIds) await evaluateAllRules(businessId);
+
+    return { status: "done", note: `${businessIds.length} accounts` };
+  },
+};
+
 export const JOB_HANDLERS: Record<string, JobHandler> = {
   "automation.send": automationSendHandler,
+  "shopify.webhook": shopifyWebhookHandler,
+  "shopify.abandoned_cart": abandonedCartHandler,
+  "shopify.register_webhooks": registerWebhooksHandler,
+  "shopify.backfill": backfillHandler,
+  "shopify.compliance": complianceHandler,
+  "catalog.embed": catalogEmbedHandler,
+  "tags.evaluate_rules": evaluateRulesHandler,
+  "tags.evaluate_all_rules": evaluateAllRulesHandler,
 };
 
