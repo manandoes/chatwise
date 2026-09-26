@@ -5,6 +5,7 @@
 -- package (or equivalent) must be present before this migration runs.
 CREATE EXTENSION IF NOT EXISTS vector;
 
+
 -- CreateEnum
 CREATE TYPE "MemberRole" AS ENUM ('OWNER', 'AGENT');
 
@@ -59,6 +60,9 @@ CREATE TYPE "BookingStatus" AS ENUM ('BOOKED', 'CANCELED');
 -- CreateEnum
 CREATE TYPE "ProductSource" AS ENUM ('SHOPIFY', 'MANUAL');
 
+-- AlterEnum
+ALTER TYPE "MessageAuthor" ADD VALUE 'AUTOMATION';
+
 -- AlterTable
 ALTER TABLE "businesses" ADD COLUMN     "escalateUrgentToHuman" BOOLEAN NOT NULL DEFAULT false;
 
@@ -88,6 +92,7 @@ ADD COLUMN     "variables" TEXT[] DEFAULT ARRAY[]::TEXT[];
 
 -- AlterTable
 ALTER TABLE "messages" ADD COLUMN     "language" TEXT,
+ADD COLUMN     "sentById" TEXT,
 ADD COLUMN     "sentiment" "Sentiment",
 ADD COLUMN     "urgent" BOOLEAN NOT NULL DEFAULT false;
 

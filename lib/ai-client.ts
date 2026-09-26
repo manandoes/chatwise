@@ -118,17 +118,18 @@ type ApiResponse = {
 };
 
 /**
- * The one call to the provider, shared by every caller below.
+ * One request to the provider, shared by every caller below.
  *
- * `generateReply` (a bot's chat turn) and `extractFromDocument` (reading a
- * file) send different request bodies, but need the exact same treatment of a
- * missing key, a timeout, a non-200, and an empty reply — so that treatment
- * lives once, here, rather than being copied per caller.
+ * A chat turn, reading a file and embedding text all send different bodies to
+ * different model methods, but need the exact same treatment of a missing
+ * key, a timeout and a non-200 — so that treatment lives once, here, rather
+ * than being copied per caller. Returns the parsed body on success.
  */
-async function callGemini(
+async function requestGemini(
+  url: string,
   body: Record<string, unknown>,
   ownKey?: string | null,
-): Promise<AiResult> {
+): Promise<{ ok: true; json: unknown } | Extract<AiResult, { ok: false }>> {
   const apiKey = keyToUse(ownKey);
 
   if (!apiKey) {
@@ -146,7 +147,7 @@ async function callGemini(
   let response: Response;
 
   try {
-    response = await fetch(apiUrl(), {
+    response = await fetch(url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -190,7 +191,19 @@ async function callGemini(
     };
   }
 
-  const responseBody = (await response.json().catch(() => null)) as ApiResponse | null;
+  return { ok: true, json: await response.json().catch(() => null) };
+}
+
+/** A generateContent call: the reply's text, or why there isn't one. */
+async function callGemini(
+  body: Record<string, unknown>,
+  ownKey?: string | null,
+): Promise<AiResult> {
+  const result = await requestGemini(apiUrl(), body, ownKey);
+
+  if (!result.ok) return result;
+
+  const responseBody = result.json as ApiResponse | null;
   const candidate = responseBody?.candidates?.[0];
 
   const text = (candidate?.content?.parts ?? [])
@@ -298,4 +311,78 @@ export async function extractFromDocument({
     },
     apiKey,
   );
+}
+
+// ─── Embeddings, for product search ─────────────────────────────────────────
+
+/**
+ * How many numbers an embedding has. Fixed by the database column
+ * (`products.embedding vector(768)`), so changing it means a migration.
+ */
+export const EMBEDDING_DIMENSIONS = 768;
+
+const DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001";
+
+function embeddingUrl(): string {
+  const base = (process.env.GEMINI_BASE_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
+  const model = process.env.GEMINI_EMBEDDING_MODEL || DEFAULT_EMBEDDING_MODEL;
+
+  return `${base}/${API_VERSION}/models/${model}:embedContent`;
+}
+
+export type EmbeddingResult =
+  | { ok: true; values: number[] }
+  | Extract<AiResult, { ok: false }>;
+
+/**
+ * Turns text into a list of numbers such that similar meanings land close
+ * together — what lets "something for dry skin" find a product called
+ * "Hydrating Night Cream" without sharing a word.
+ *
+ * `purpose` matters to the model: a product description is a DOCUMENT, a
+ * customer's question is a QUERY, and each is embedded slightly differently
+ * so the two meet in the middle.
+ */
+export async function embedText({
+  text,
+  purpose,
+  apiKey,
+}: {
+  text: string;
+  purpose: "document" | "query";
+  apiKey?: string | null;
+}): Promise<EmbeddingResult> {
+  const trimmed = text.trim().slice(0, 8_000);
+
+  if (!trimmed) return { ok: false, reason: "failed", message: "There was nothing to index." };
+
+  const result = await requestGemini(
+    embeddingUrl(),
+    {
+      content: { parts: [{ text: trimmed }] },
+      taskType: purpose === "document" ? "RETRIEVAL_DOCUMENT" : "RETRIEVAL_QUERY",
+      outputDimensionality: EMBEDDING_DIMENSIONS,
+    },
+    apiKey,
+  );
+
+  if (!result.ok) return result;
+
+  const values = (result.json as { embedding?: { values?: unknown } } | null)?.embedding?.values;
+
+  if (
+    !Array.isArray(values) ||
+    values.length !== EMBEDDING_DIMENSIONS ||
+    !values.every((value) => typeof value === "number" && Number.isFinite(value))
+  ) {
+    console.error("[ai] embedding came back in an unexpected shape");
+
+    return { ok: false, reason: "failed", message: "The assistant couldn't index that." };
+  }
+
+  // A shortened embedding isn't unit-length; scale it so cosine distance
+  // compares like with like.
+  const length = Math.hypot(...(values as number[])) || 1;
+
+  return { ok: true, values: (values as number[]).map((value) => value / length) };
 }
