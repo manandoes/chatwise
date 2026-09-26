@@ -50,6 +50,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/dashboard/deals", label: "Deals", icon: "KanbanSquare" },
       { href: "/dashboard/leads", label: "Leads", icon: "Users" },
       { href: "/dashboard/bookings", label: "Bookings", icon: "CalendarDays" },
+      { href: "/dashboard/payments", label: "Payments", icon: "Wallet" },
       {
         href: "/dashboard/knowledge-base",
         label: "Knowledge base",

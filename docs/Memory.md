@@ -2086,6 +2086,40 @@ that is an argument rather than a look.
 
 ---
 
+## Session Update — 2026-09-26 (payment links)
+
+- **Completed:** merchant payment links on the business's own Razorpay or
+  Stripe account — `integrations/payments/`, `/api/payments/*`, the public
+  receipt page `/receipts/<token>`, Dashboard → Payments, and the Payment
+  links section of Integrations. Rules.md §1 and Architecture.md now say
+  Stripe is allowed for merchant payment links only.
+- **Verified:** typecheck, lint, 29 checks (signatures, replay window,
+  signed webhooks through `next dev` and the job runner, refunds, dedupe,
+  receipt page). **Not verified against the real Razorpay/Stripe APIs**
+  (creating links, checking keys) — no test accounts were available.
+
+### Decisions and assumptions (please confirm)
+
+- **Stripe links are Checkout Sessions**, which Stripe caps at 24 hours.
+  Razorpay links last 7 days. An expired link is replaced by a fresh one with
+  "Send again" (the new payment records `retryOfId`).
+- **A failed attempt re-offers the same link**, once per payment — both
+  providers keep a link payable after a declined card.
+- **A payment that arrives after its link was marked expired still counts as
+  paid** (money received beats our bookkeeping).
+- **Any team member may send a payment link**; only owners connect accounts.
+  Sending to someone who opted out is refused.
+- **A manually sent link goes out even if the "Payment request" automation is
+  off** (a person pressed Send). Receipts, retry and refund messages follow
+  their own switches.
+- **Refunds are recorded from the provider, not started from ChatWise.**
+  Refund from the Razorpay/Stripe dashboard and the customer is told here.
+- **Webhook secrets are per account**, and each account has its own webhook
+  address, so an event can only ever touch payments of the account it was
+  signed for.
+
+---
+
 ## Session Update — [DATE]
 - Worked on:
 - Completed:

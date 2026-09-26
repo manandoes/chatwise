@@ -20,6 +20,8 @@ import {
   runBackfillPage,
 } from "../integrations/shopify/connect.ts";
 import { processShopifyWebhook, sendAbandonedCartReminder } from "../integrations/shopify/sync.ts";
+import { applyPaymentEvent, readProviderEvent } from "../integrations/payments/links.ts";
+import { db } from "../lib/db.ts";
 
 export type JobContext = {
   id: string;
@@ -129,6 +131,29 @@ const complianceHandler: JobHandler = {
   },
 };
 
+// ─── Payment links ──────────────────────────────────────────────────────────
+
+/**
+ * One Razorpay or Stripe webhook. Payload: { accountId, body }. The account
+ * fixes the business; status only moves forward and each message is its own
+ * deduped job, so running this twice is harmless.
+ */
+const paymentsWebhookHandler: JobHandler = {
+  safeToRepeat: true,
+  async run(job) {
+    const account = await db.paymentAccount.findUnique({
+      where: { id: String(job.payload.accountId ?? "") },
+      select: { businessId: true, provider: true },
+    });
+
+    if (!account) return { status: "done", note: "The payment account was removed." };
+
+    const note = await applyPaymentEvent(account, readProviderEvent(account.provider, job.payload.body));
+
+    return { status: "done", note };
+  },
+};
+
 // ─── CRM ────────────────────────────────────────────────────────────────────
 
 /** Indexes one product for search. Payload: { productId }. */
@@ -177,6 +202,7 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   "shopify.register_webhooks": registerWebhooksHandler,
   "shopify.backfill": backfillHandler,
   "shopify.compliance": complianceHandler,
+  "payments.webhook": paymentsWebhookHandler,
   "catalog.embed": catalogEmbedHandler,
   "tags.evaluate_rules": evaluateRulesHandler,
   "tags.evaluate_all_rules": evaluateAllRulesHandler,

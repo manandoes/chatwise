@@ -10,6 +10,7 @@ import type { Metadata } from "next";
 import { AutomationsEditor } from "@/components/dashboard/automations-editor";
 import { EmptyState, Pill, Section } from "@/components/dashboard/form-bits";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { PaymentAccountsPanel } from "@/components/dashboard/payment-accounts-panel";
 import { ShopifyPanel } from "@/components/dashboard/shopify-panel";
 import { listAutomations } from "@/lib/automations";
 import { db } from "@/lib/db";
@@ -18,6 +19,7 @@ import { formatWhen } from "@/lib/format-when";
 import { describeJobType, listFailedJobs } from "@/lib/jobs";
 import { requirePageContext } from "@/lib/page-context";
 import { isShopifyConfigured } from "@/integrations/shopify/client";
+import { listPaymentAccounts } from "@/integrations/payments/links";
 
 export const metadata: Metadata = { title: "Integrations" };
 
@@ -78,7 +80,7 @@ export default async function IntegrationsPage({
     typeof params.shopify === "string" ? SHOPIFY_RESULTS[params.shopify] : undefined;
   const prefillShop = typeof params.shop === "string" ? params.shop : "";
 
-  const [shop, automations, templates, failedJobs, compliance, connection] = await Promise.all([
+  const [shop, automations, templates, failedJobs, compliance, connection, paymentAccounts] = await Promise.all([
     db.shop.findUnique({
       where: { businessId: business.id },
       select: {
@@ -108,6 +110,7 @@ export default async function IntegrationsPage({
       where: { businessId: business.id },
       select: { type: true },
     }),
+    listPaymentAccounts(business.id),
   ]);
 
   return (
@@ -140,6 +143,15 @@ export default async function IntegrationsPage({
           }
         />
       </Section>
+
+      <div id="payments">
+        <Section
+          title="Payment links"
+          description="Connect your own Razorpay or Stripe account to send customers payment links on WhatsApp. The money goes straight to your account; ChatWise never sees card details."
+        >
+          <PaymentAccountsPanel available={isFeatureEnabled("paymentLinks")} accounts={paymentAccounts} />
+        </Section>
+      </div>
 
       <Section
         title="Automated messages"

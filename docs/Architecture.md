@@ -15,6 +15,7 @@
 | API-tier WhatsApp connection | Official **WhatsApp Business Cloud API** (Meta) via webhooks | Official, reliable, per-message billed channel for larger businesses |
 | File/image storage | S3-compatible object storage (e.g. Cloudflare R2 or AWS S3) | Knowledge base uploads, catalog images |
 | Payments | **Razorpay** — chosen by the product owner on 2026-09-05, settling PRD.md §10. Called over plain HTTPS from `lib/razorpay.ts`; no SDK | Subscription billing in rupees, hosted payment pages so no card details reach this codebase, and invoices we read rather than copy (see §5f) |
+| Merchant payment links | The business's **own Razorpay or Stripe** account (2026-09-26), called over plain HTTPS from `integrations/payments/` | Lets a business take payment from its customers on WhatsApp. Separate from ChatWise's own billing above, which stays Razorpay-only |
 | Hosting | Vercel (Next.js app) + a separate small VM/container host for the whatsapp-web.js workers | Next.js app is stateless/serverless-friendly; whatsapp-web.js workers are NOT serverless-friendly (need persistent Chromium sessions), so they run on a normal always-on server |
 
 ## 2. High-Level App Flow
@@ -276,6 +277,12 @@ Designed so a non-technical person can open the file tree and understand what's 
 │
 ├── integrations/                       # Outside services other than WhatsApp. One folder per
 │   │                                   #   service; nothing else calls that service directly
+│   ├── payments/                       #   The BUSINESS's own Razorpay/Stripe, for payment links
+│   │   ├── razorpay.ts                 #     Links + webhook signature (not lib/razorpay.ts,
+│   │   │                               #     which is ChatWise's own billing)
+│   │   ├── stripe.ts                   #     Checkout Sessions + webhook signature
+│   │   ├── types.ts                    #     The one shape both providers are read into
+│   │   └── links.ts                    #     Create, resend, and move a payment forward from events
 │   └── shopify/
 │       ├── client.ts                   #     OAuth + webhook signature checks, the paced Admin API
 │       ├── oauth-state.ts              #     The cookie that ties Shopify's redirect to this browser

@@ -9,6 +9,12 @@ These rules apply to any AI (or human) writing code in this repo. When in doubt,
     settling the open question in PRD.md §10. Every call to it lives in
     `lib/razorpay.ts` and nowhere else, so a future change of provider is one
     file rather than a change threaded through the app.
+  - **Stripe is allowed for merchant payment links only** (product owner,
+    2026-09-26). A business may connect its *own* Razorpay or Stripe account
+    to send its customers payment links. That code lives in
+    `integrations/payments/` — one file per provider — and never touches
+    ChatWise's own subscription billing, which stays Razorpay-only in
+    `lib/razorpay.ts` on the platform's account.
 - **Don't** introduce a new framework, database, state-management library, CSS approach, or auth system without it being written into Architecture.md first. If a task seems to need one, stop and flag it instead of silently adding a dependency.
 - **Don't** use class components — functional components + hooks only.
 - **Don't** reach for a new npm package if the standard library, an already-installed package, or a few lines of plain code can do it. Every new dependency is something the (non-technical) product owner now has to trust.

@@ -20,6 +20,7 @@ import {
   Settings,
   Smartphone,
   Users,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 
@@ -42,6 +43,7 @@ const ICONS: Record<string, LucideIcon> = {
   Plug,
   UsersRound,
   Filter,
+  Wallet,
 };
 
 export function NavIcon({
