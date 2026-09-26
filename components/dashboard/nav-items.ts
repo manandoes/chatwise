@@ -14,6 +14,8 @@ export type NavItem = {
   icon: string;
   /** Shown until the feature is built, so nothing looks broken. */
   comingSoon?: boolean;
+  /** Hidden from team members; the routes behind it refuse them anyway. */
+  ownerOnly?: boolean;
 };
 
 export type NavGroup = {
@@ -43,13 +45,18 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "Conversations",
         icon: "MessagesSquare",
       },
+      { href: "/dashboard/contacts", label: "Contacts", icon: "Contact" },
+      { href: "/dashboard/segments", label: "Segments", icon: "Filter" },
+      { href: "/dashboard/deals", label: "Deals", icon: "KanbanSquare" },
       { href: "/dashboard/leads", label: "Leads", icon: "Users" },
+      { href: "/dashboard/bookings", label: "Bookings", icon: "CalendarDays" },
       {
         href: "/dashboard/knowledge-base",
         label: "Knowledge base",
         icon: "BookOpen",
         comingSoon: true,
       },
+      { href: "/dashboard/products", label: "Products", icon: "Package" },
       {
         href: "/dashboard/quick-replies",
         label: "Quick replies",
@@ -62,7 +69,19 @@ export const NAV_GROUPS: NavGroup[] = [
     heading: "Account",
     items: [
       { href: "/dashboard/analytics", label: "Analytics", icon: "BarChart3" },
-      { href: "/dashboard/billing", label: "Billing", icon: "CreditCard" },
+      {
+        href: "/dashboard/integrations",
+        label: "Integrations",
+        icon: "Plug",
+        ownerOnly: true,
+      },
+      { href: "/dashboard/team", label: "Team", icon: "UsersRound" },
+      {
+        href: "/dashboard/billing",
+        label: "Billing",
+        icon: "CreditCard",
+        ownerOnly: true,
+      },
       { href: "/dashboard/settings", label: "Settings", icon: "Settings" },
     ],
   },

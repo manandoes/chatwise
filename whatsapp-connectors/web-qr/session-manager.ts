@@ -32,6 +32,10 @@ import {
   stopCampaignSender,
 } from "../../jobs/campaign-sender.ts";
 import {
+  startPendingJobRunner,
+  stopPendingJobRunner,
+} from "../../jobs/pending-job-runner.ts";
+import {
   COMMAND_QUEUE,
   EVENT_QUEUE,
   QR_TTL_SECONDS,
@@ -323,6 +327,11 @@ console.log(
 // browser session.
 startCampaignSender();
 
+// Integration work queued by webhooks — Shopify order messages, payment
+// receipts, booking reminders, scheduled exports (jobs/pending-job-runner.ts).
+// Here for the same reason: it needs a process that is always up.
+startPendingJobRunner();
+
 // ─── Shutting down tidily ───────────────────────────────────────────────────
 
 async function shutdown() {
@@ -337,6 +346,7 @@ async function shutdown() {
   }
 
   stopCampaignSender();
+  stopPendingJobRunner();
 
   await commandWorker.close();
   await eventQueue.close();

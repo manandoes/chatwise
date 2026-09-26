@@ -13,7 +13,7 @@ import {
   saveGeminiApiKey,
 } from "@/lib/ai-credentials";
 import { apiError, unexpectedError } from "@/lib/api-response";
-import { getApiUser } from "@/lib/auth";
+import { getApiUser, refuseUnlessOwner } from "@/lib/auth";
 import { isEncryptionConfigured } from "@/lib/encryption";
 import { getOrCreateBusiness } from "@/lib/onboarding";
 
@@ -57,6 +57,10 @@ export async function POST(request: Request) {
       });
     }
 
+    // Account settings belong to the owner, not the whole team.
+    const denied = await refuseUnlessOwner(user.id);
+    if (denied) return denied;
+
     const business = await getOrCreateBusiness(user.id);
 
     await saveGeminiApiKey(business.id, apiKey);
@@ -74,6 +78,10 @@ export async function DELETE() {
     if (!user) {
       return apiError("Please sign in again.", "NOT_AUTHENTICATED", 401);
     }
+
+    // Account settings belong to the owner, not the whole team.
+    const denied = await refuseUnlessOwner(user.id);
+    if (denied) return denied;
 
     const business = await getOrCreateBusiness(user.id);
 

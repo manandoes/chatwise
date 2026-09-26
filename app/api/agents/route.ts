@@ -8,7 +8,7 @@
 
 import { getBot } from "@/bots/shared/bot-catalog";
 import { apiError, unexpectedError } from "@/lib/api-response";
-import { getApiUser } from "@/lib/auth";
+import { getApiUser, refuseUnlessOwner } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getOrCreateBusiness } from "@/lib/onboarding";
 import {
@@ -27,6 +27,10 @@ export async function PATCH(request: Request) {
 
     // Found from the session, never from an id in the request body — so one
     // customer cannot reach another's agent (docs/Rules.md §3).
+    // Account settings belong to the owner, not the whole team.
+    const denied = await refuseUnlessOwner(user.id);
+    if (denied) return denied;
+
     const business = await getOrCreateBusiness(user.id);
 
     if (!business.agent) {

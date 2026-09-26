@@ -37,6 +37,11 @@ model User {
   accounts Account[]
   sessions Session[]
 
+  /// Which team this person works in (see BusinessMember). The owner has a row
+  /// here too, so "who may see this business" is one lookup for everybody.
+  membership  BusinessMember?
+  invitesSent TeamInvite[]
+
   @@map("users")
 }
 
@@ -135,6 +140,37 @@ model Business {
   subscription     Subscription?
   quickReplies     QuickReply[]
   businessHours    BusinessHours?
+
+  // ── CRM & integrations (2026-09-26) ──
+  members            BusinessMember[]
+  invites            TeamInvite[]
+  contacts           Contact[]
+  tags               Tag[]
+  consentEvents      ConsentEvent[]
+  jobs               PendingJob[]
+  tagRules           TagRule[]
+  segments           Segment[]
+  deals              Deal[]
+  dealActivities     DealActivity[]
+  notes              ConversationNote[]
+  notifications      Notification[]
+  complianceRequests ComplianceRequest[]
+  shop               Shop?
+  orders             Order[]
+  checkouts          ShopifyCheckout[]
+  payments           Payment[]
+  paymentAccounts    PaymentAccount[]
+  automations        AutomationSetting[]
+  google             GoogleConnection?
+  scheduledExports   ScheduledExport[]
+  importBatches      ImportBatch[]
+  calendly           CalendlyConnection?
+  bookings           Booking[]
+  products           Product[]
+
+  /// When the AI flags an inbound message as urgent or angry, stop the agent
+  /// and hand the thread to a person instead of letting the bot answer it.
+  escalateUrgentToHuman Boolean @default(false)
 
   @@map("businesses")
 }
@@ -423,7 +459,30 @@ model Conversation {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// The CRM contact this thread belongs to. Nullable only so that rows
+  /// written before contacts existed still load; every new thread gets one.
+  contactId String?
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  /// The team member handling this thread, if anyone is.
+  assignedToId String?
+  assignedTo   BusinessMember? @relation("ConversationAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  /// Raised when the AI reads a message as angry or urgent, so the inbox can
+  /// put it first. Cleared by a person.
+  priority       ConversationPriority @default(NORMAL)
+  priorityReason String?
+
+  /// A few sentences for whoever picks the thread up: the last topic, what is
+  /// still unanswered, and how the customer seems. Written by the AI on
+  /// handover and every so often after that.
+  summary             String?   @db.Text
+  summaryUpdatedAt    DateTime?
+  /// How many messages the thread had when `summary` was written.
+  summaryMessageCount Int       @default(0)
+
   messages         Message[]
+  internalNotes    ConversationNote[]
   /// The CRM record the background agent keeps up to date (Phase 8).
   lead             Lead?
   /// Any bulk messages sent to this contact (Phase 12).
@@ -433,6 +492,9 @@ model Conversation {
   /// code path happens to create it.
   @@unique([businessId, contactPhone])
   @@index([businessId, lastMessageAt])
+  @@index([contactId])
+  @@index([businessId, assignedToId])
+  @@index([businessId, priority])
   @@map("conversations")
 }
 
@@ -457,6 +519,10 @@ enum MessageAuthor {
   /// broadcast is not somebody answering a customer, and counting it as one
   /// would flatter both the reply figures and the answer times.
   CAMPAIGN
+  /// An automated message the business switched on: an order confirmation, a
+  /// payment receipt, a booking reminder (2026-09-26). Not an answer to
+  /// anybody, for the same reason as CAMPAIGN.
+  AUTOMATION
 }
 
 /// A single WhatsApp message in a thread.
@@ -485,6 +551,16 @@ model Message {
 
   /// Set when sending failed, in words a person can act on.
   failureReason String?
+
+  /// How the customer came across in this message, read by the AI after it
+  /// arrived. Null for outbound messages and for anything not yet read.
+  sentiment Sentiment?
+  /// True when the AI thought this needs a person soon.
+  urgent    Boolean    @default(false)
+  /// The team member who typed it, for messages written in the inbox.
+  sentById  String?
+  /// The language it was written in, as a short code ("en", "hi").
+  language  String?
 
   createdAt DateTime @default(now())
 
@@ -558,6 +634,11 @@ model Lead {
   conversationId String       @unique
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
+  /// The CRM contact behind this lead. Nullable for the same reason as
+  /// `Conversation.contactId`.
+  contactId String?
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
   /// Copied from the conversation so the leads table can be read on its own.
   contactPhone String
   name         String?
@@ -594,6 +675,7 @@ model Lead {
 
   @@index([businessId, updatedAt])
   @@index([businessId, status])
+  @@index([contactId])
   @@map("leads")
 }
 
@@ -691,7 +773,19 @@ model MessageTemplate {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  campaigns Campaign[]
+  /// The placeholders the body uses, in order — "name", "order_number"… A
+  /// body written with Meta's numbered placeholders ({{1}}) lists them as
+  /// "1", "2". Filled in on screen before anything is sent.
+  variables       String[]  @default([])
+  /// Meta's own id for the template, once it has been found there.
+  metaTemplateId  String?
+  /// Meta's reason, in its own words, when it turned the template down.
+  rejectionReason String?
+  /// When the approval status was last read back from Meta.
+  lastSyncedAt    DateTime?
+
+  campaigns   Campaign[]
+  automations AutomationSetting[]
 
   @@index([businessId, updatedAt])
   @@map("message_templates")
@@ -738,6 +832,21 @@ model Campaign {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  /// A saved segment to send to instead of a hand-picked list. The list is
+  /// worked out when the campaign falls due, not when it was written, so a
+  /// broadcast scheduled for Friday reaches whoever matches on Friday.
+  segmentId       String?
+  segment         Segment?  @relation(fields: [segmentId], references: [id], onDelete: SetNull)
+  /// When the segment was turned into recipient rows. Null until then; the
+  /// sender will not call a segment campaign finished before it is set.
+  audienceBuiltAt DateTime?
+  /// Only send to contacts who have said yes (OPTED_IN), not merely those who
+  /// haven't said no.
+  onlyOptedIn     Boolean   @default(false)
+  /// Values chosen on screen for the template's placeholders, by name.
+  /// Per-contact values ({name}) are filled in per recipient instead.
+  variableValues  Json      @default("{}")
 
   recipients CampaignRecipient[]
 
@@ -987,4 +1096,865 @@ model BillingEvent {
 
   @@index([businessId, receivedAt])
   @@map("billing_events")
+}
+
+// ─── CRM foundation (2026-09-26) ────────────────────────────────────────────
+// Until now a "contact" was spread across three tables: the Conversation (a
+// thread with a phone number), the Lead (what the CRM agent learnt) and the
+// OptOut list. Shopify customers, imported spreadsheets and payment links all
+// need somebody to attach to who may never have messaged at all, so the
+// contact becomes a row of its own. Conversations and leads point at it; the
+// phone number is still the identity, one contact per number per business.
+
+/// What someone may do inside a business's account.
+enum MemberRole {
+  /// Runs the account: billing, integrations, team, everything.
+  OWNER
+  /// Works the inbox and the CRM. Cannot change billing, integrations or the
+  /// team.
+  AGENT
+}
+
+/// A person who works in a business's account.
+///
+/// The owner has a row here as well as being `Business.userId`, so every
+/// "may this person see this?" check is one lookup. A person belongs to one
+/// business at a time (userId is UNIQUE), matching one login = one workspace.
+model BusinessMember {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role MemberRole @default(AGENT)
+
+  createdAt DateTime @default(now())
+
+  assignedConversations Conversation[] @relation("ConversationAssignee")
+  ownedDeals            Deal[]
+
+  @@unique([businessId, userId])
+  @@index([businessId])
+  @@map("business_members")
+}
+
+/// An invitation to join a business's team.
+///
+/// There is no email service yet (docs/Memory.md), so the owner copies the
+/// link and sends it themselves. Only a hash of the token is stored: the link
+/// is the secret, and a database leak must not hand out working invitations.
+model TeamInvite {
+  id          String     @id @default(cuid())
+  businessId  String
+  business    Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  email       String
+  role        MemberRole @default(AGENT)
+  tokenHash   String     @unique
+  invitedById String
+  invitedBy   User       @relation(fields: [invitedById], references: [id], onDelete: Cascade)
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime   @default(now())
+
+  @@index([businessId])
+  @@map("team_invites")
+}
+
+/// Whether a contact has agreed to hear from the business.
+enum OptInStatus {
+  /// We have no record either way. Transactional messages (order updates) are
+  /// allowed; broadcasts can be limited to OPTED_IN contacts per campaign.
+  PENDING
+  OPTED_IN
+  /// Said STOP or was opted out by hand. Nothing automated reaches them.
+  OPTED_OUT
+}
+
+/// One person a business knows, whether or not they have messaged yet.
+model Contact {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  /// Digits only, international format — the same shape as
+  /// `Conversation.contactPhone`, which is what dedupes the two.
+  phone String
+  name  String?
+  email String?
+
+  /// The language they write in, as a short code ("en", "hi", "es"), detected
+  /// from their messages. Used for replies and for filtering broadcasts.
+  language String?
+
+  /// Lifetime spend across paid orders and paid payment links, in `currency`.
+  /// Recomputed from those rows rather than incremented, so a re-delivered
+  /// webhook can never count an order twice (lib/contacts.ts).
+  totalSpent  Decimal   @default(0) @db.Decimal(14, 2)
+  currency    String?
+  orderCount  Int       @default(0)
+  lastOrderAt DateTime?
+
+  optInStatus OptInStatus @default(PENDING)
+  /// Where the current consent state came from ("whatsapp: replied STOP",
+  /// "shopify checkout", "import", "dashboard").
+  optInSource String?
+  /// When it last changed.
+  optInAt     DateTime?
+
+  shopifyCustomerId String?
+  /// The import that created this contact, so a bad import can be undone.
+  importBatchId     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conversations Conversation[]
+  leads         Lead[]
+  tags          ContactTag[]
+  consentEvents ConsentEvent[]
+  deals         Deal[]
+  orders        Order[]
+  checkouts     ShopifyCheckout[]
+  payments      Payment[]
+  bookings      Booking[]
+
+  @@unique([businessId, phone])
+  @@index([businessId, createdAt])
+  @@index([businessId, shopifyCustomerId])
+  @@index([businessId, optInStatus])
+  @@index([importBatchId])
+  @@map("contacts")
+}
+
+/// A label that can be put on contacts, e.g. "VIP" or "abandoner".
+model Tag {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name       String
+  createdAt  DateTime @default(now())
+
+  contacts ContactTag[]
+  rules    TagRule[]
+
+  @@unique([businessId, name])
+  @@map("tags")
+}
+
+/// How a tag ended up on a contact. Rule-applied tags are removed again when
+/// the rule stops matching; tags a person added are never touched by a rule.
+enum TagSource {
+  MANUAL
+  RULE
+  IMPORT
+  SHOPIFY
+}
+
+/// Which contacts carry which tags (many-to-many).
+model ContactTag {
+  contactId  String
+  contact    Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tagId      String
+  tag        Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  businessId String
+  source     TagSource @default(MANUAL)
+  createdAt  DateTime  @default(now())
+
+  @@id([contactId, tagId])
+  @@index([businessId])
+  @@index([tagId])
+  @@map("contact_tags")
+}
+
+/// The audit log of every consent change. Never updated, never deleted except
+/// with the contact itself (a GDPR erasure).
+model ConsentEvent {
+  id          String       @id @default(cuid())
+  businessId  String
+  business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contactId   String
+  contact     Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  fromStatus  OptInStatus?
+  toStatus    OptInStatus
+  /// Where it came from, in words: "whatsapp", "dashboard", "import", …
+  source      String
+  /// What exactly happened — the word they replied, the import id, etc.
+  detail      String?
+  /// The team member who made the change, when a person did.
+  actorUserId String?
+  createdAt   DateTime     @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([contactId, createdAt])
+  @@map("consent_events")
+}
+
+/// Where a background job has got to.
+enum JobStatus {
+  PENDING
+  RUNNING
+  DONE
+  /// Ran out of attempts. Shown to the owner on the Integrations screen.
+  FAILED
+  CANCELLED
+}
+
+/// Work that must not happen inside a webhook request.
+///
+/// Shopify, Razorpay, Stripe and Calendly all give a webhook a few seconds to
+/// answer before assuming we are down, so the webhook only writes a row here
+/// and returns. jobs/pending-job-runner.ts, on the always-on host, picks rows
+/// up by `runAt` and does the slow part — including every WhatsApp send.
+///
+/// A queue in Postgres rather than BullMQ for the same reason as the campaign
+/// sender (jobs/README.md): the schedule is a fact the database already owns,
+/// and "run this in an hour unless the cart converted" is a row with a time on
+/// it that survives restarts and can be cancelled with an UPDATE.
+model PendingJob {
+  id          String    @id @default(cuid())
+  businessId  String?
+  business    Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  /// Set for Shopify work, so uninstalling a store cancels everything it
+  /// queued in one statement.
+  shopId      String?
+  jobType     String
+  payload     Json      @default("{}")
+  runAt       DateTime  @default(now())
+  status      JobStatus @default(PENDING)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  lastError   String?
+  /// When set, a second job with the same key is not created — how a
+  /// re-delivered webhook avoids queueing the same message twice.
+  dedupeKey   String?   @unique
+  lockedAt    DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, runAt])
+  @@index([businessId, status])
+  @@index([shopId, status])
+  @@map("pending_jobs")
+}
+
+// ─── Segments, rules, deals, team inbox (2026-09-26) ────────────────────────
+
+/// A saved filter over contacts — tags, fields, dates — reused by broadcasts,
+/// exports and auto-tag rules. The filter's shape is documented and checked in
+/// lib/segments.ts; nothing else writes it.
+model Segment {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name       String
+  filter     Json     @default("{}")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  campaigns        Campaign[]
+  scheduledExports ScheduledExport[]
+
+  @@unique([businessId, name])
+  @@map("segments")
+}
+
+/// "Contacts matching this filter get this tag." Re-run after every order and
+/// once a day; a contact who stops matching loses the tag again, unless a
+/// person put it on them.
+model TagRule {
+  id         String    @id @default(cuid())
+  businessId String
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  tagId      String
+  tag        Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  name       String
+  /// Same shape as `Segment.filter`.
+  filter     Json      @default("{}")
+  enabled    Boolean   @default(true)
+  lastRunAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([businessId])
+  @@map("tag_rules")
+}
+
+enum ConversationPriority {
+  NORMAL
+  HIGH
+}
+
+enum Sentiment {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+}
+
+/// A note one team member leaves for the others on a thread. Never sent to
+/// the customer. `@name` mentions notify the people named.
+model ConversationNote {
+  id               String       @id @default(cuid())
+  businessId       String
+  business         Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  conversationId   String
+  conversation     Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  authorId         String
+  body             String       @db.Text
+  mentionedUserIds String[]     @default([])
+  createdAt        DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([businessId])
+  @@map("conversation_notes")
+}
+
+enum NotificationKind {
+  MENTION
+  ASSIGNED
+  URGENT
+}
+
+/// Something a team member should look at: they were mentioned, or a thread
+/// was handed to them.
+model Notification {
+  id             String           @id @default(cuid())
+  businessId     String
+  business       Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId         String
+  kind           NotificationKind
+  conversationId String?
+  text           String
+  readAt         DateTime?
+  createdAt      DateTime         @default(now())
+
+  @@index([userId, readAt])
+  @@index([businessId])
+  @@map("notifications")
+}
+
+enum DealStage {
+  LEAD
+  QUALIFIED
+  PROPOSAL
+  WON
+  LOST
+}
+
+/// A potential sale, moved across the pipeline board.
+model Deal {
+  id            String          @id @default(cuid())
+  businessId    String
+  business      Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contactId     String
+  contact       Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  title         String
+  stage         DealStage       @default(LEAD)
+  value         Decimal         @default(0) @db.Decimal(14, 2)
+  currency      String          @default("INR")
+  expectedClose DateTime?
+  ownerId       String?
+  owner         BusinessMember? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  /// Order within its column on the board.
+  position      Float           @default(0)
+  closedAt      DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  activities DealActivity[]
+
+  @@index([businessId, stage, position])
+  @@index([contactId])
+  @@map("deals")
+}
+
+enum DealActivityKind {
+  CREATED
+  STAGE_CHANGED
+  VALUE_CHANGED
+  OWNER_CHANGED
+  NOTE
+}
+
+/// Everything that happened to a deal, oldest first.
+model DealActivity {
+  id          String           @id @default(cuid())
+  businessId  String
+  business    Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  dealId      String
+  deal        Deal             @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  actorUserId String?
+  kind        DealActivityKind
+  fromStage   DealStage?
+  toStage     DealStage?
+  note        String?          @db.Text
+  createdAt   DateTime         @default(now())
+
+  @@index([dealId, createdAt])
+  @@index([businessId])
+  @@map("deal_activities")
+}
+
+// ─── Integrations (2026-09-26) ──────────────────────────────────────────────
+
+/// Every webhook we have already acted on, from any provider.
+///
+/// Shopify, Razorpay, Stripe and Calendly all retry deliveries and can send
+/// the same one twice regardless. The provider's own event id is unique here,
+/// so the second insert fails and the repeat is dropped — the same trick as
+/// `BillingEvent` and `Message.externalId`.
+model IntegrationEvent {
+  id         String   @id @default(cuid())
+  provider   String
+  externalId String
+  businessId String?
+  topic      String
+  receivedAt DateTime @default(now())
+
+  @@unique([provider, externalId])
+  @@index([businessId, receivedAt])
+  @@map("integration_events")
+}
+
+/// A Shopify store connected to a business. One store per business.
+model Shop {
+  id         String   @id @default(cuid())
+  businessId String   @unique
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  /// "example.myshopify.com" — Shopify's permanent name for the store.
+  shopDomain  String @unique
+  /// The Admin API token, encrypted (lib/encryption.ts). Never logged, never
+  /// sent to a browser.
+  accessToken Bytes
+  scopes      String
+
+  active         Boolean   @default(true)
+  installedAt    DateTime  @default(now())
+  uninstalledAt  DateTime?
+  /// When the order/checkout/customer webhooks were last registered, and
+  /// what went wrong if they could not be.
+  webhooksAt     DateTime?
+  webhookError   String?
+  /// Progress of the one-off import of past customers, orders and products.
+  backfillStatus String?
+  backfilledAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders    Order[]
+  checkouts ShopifyCheckout[]
+
+  @@map("shops")
+}
+
+enum OrderStatus {
+  /// Placed, not yet paid.
+  PENDING
+  PAID
+  FULFILLED
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+/// An order, from Shopify or tied to a payment link.
+model Order {
+  id         String   @id @default(cuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  shopId     String?
+  shop       Shop?    @relation(fields: [shopId], references: [id], onDelete: SetNull)
+  contactId  String?
+  contact    Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  shopifyOrderId String?
+  /// What the customer sees, e.g. "#1042".
+  orderNumber    String?
+  status         OrderStatus @default(PENDING)
+  total          Decimal     @default(0) @db.Decimal(14, 2)
+  currency       String      @default("INR")
+  trackingUrl    String?
+  trackingNumber String?
+  checkoutToken  String?
+
+  placedAt    DateTime  @default(now())
+  paidAt      DateTime?
+  fulfilledAt DateTime?
+  cancelledAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  payments Payment[]
+
+  @@unique([shopId, shopifyOrderId])
+  @@index([businessId, placedAt])
+  @@index([contactId])
+  @@map("orders")
+}
+
+/// A Shopify checkout, kept so an abandoned one can be followed up.
+model ShopifyCheckout {
+  id            String    @id @default(cuid())
+  businessId    String
+  business      Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  shopId        String
+  shop          Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  contactId     String?
+  contact       Contact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  checkoutToken String
+  phone         String?
+  email         String?
+  total         Decimal   @default(0) @db.Decimal(14, 2)
+  currency      String    @default("INR")
+  /// Shopify's link back into this exact cart.
+  recoveryUrl   String?
+  /// Set when an order came from this checkout — the abandoned-cart message
+  /// checks this and stays quiet.
+  convertedAt   DateTime?
+  remindedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([shopId, checkoutToken])
+  @@index([businessId, createdAt])
+  @@index([contactId])
+  @@map("shopify_checkouts")
+}
+
+/// What Shopify asked of us under GDPR, and what we did about it.
+model ComplianceRequest {
+  id          String    @id @default(cuid())
+  businessId  String?
+  business    Business? @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  shopDomain  String
+  /// customers/data_request, customers/redact or shop/redact.
+  topic       String
+  /// For a data request: what we hold on that customer, for the merchant to
+  /// pass on. Empty for the two erasure topics.
+  result      Json?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([businessId, createdAt])
+  @@map("compliance_requests")
+}
+
+enum PaymentProvider {
+  RAZORPAY
+  STRIPE
+}
+
+/// A business's own Razorpay or Stripe account, used to take payment from its
+/// customers — nothing to do with ChatWise's own subscription billing, which
+/// stays in lib/razorpay.ts on the platform's account.
+model PaymentAccount {
+  id         String          @id @default(cuid())
+  businessId String
+  business   Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  provider   PaymentProvider
+
+  /// Razorpay's key id. Not a secret on its own, but kept server-side anyway.
+  keyId            String?
+  /// Razorpay key secret or Stripe secret key, encrypted.
+  secretKey        Bytes
+  /// The webhook signing secret the business copied from the provider,
+  /// encrypted. Without it every webhook is refused.
+  webhookSecret    Bytes?
+  /// Part of this business's own webhook address, so an event names the
+  /// account it belongs to before its signature is checked.
+  webhookPathToken String  @unique
+  currency         String  @default("INR")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([businessId, provider])
+  @@map("payment_accounts")
+}
+
+enum PaymentStatus {
+  /// A link exists and nobody has paid it yet.
+  CREATED
+  PAID
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+  EXPIRED
+  CANCELLED
+}
+
+/// One payment link sent to a contact, and what became of it.
+model Payment {
+  id         String          @id @default(cuid())
+  businessId String
+  business   Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  orderId    String?
+  order      Order?          @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  contactId  String?
+  contact    Contact?        @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  provider   PaymentProvider
+
+  /// Razorpay payment link id, or Stripe Checkout Session id.
+  providerLinkId    String?
+  /// The payment itself once there is one: Razorpay pay_…, Stripe pi_….
+  providerPaymentId String?
+  linkUrl           String?
+
+  /// In the currency's smallest unit (paise, cents), which is how both
+  /// providers count and why this is an integer rather than a decimal.
+  amount         Int
+  currency       String        @default("INR")
+  refundedAmount Int           @default(0)
+  status         PaymentStatus @default(CREATED)
+  description    String
+  /// An invoice number or any reference the business wants on the receipt.
+  reference      String?
+
+  /// The unguessable part of the public receipt address (/receipts/<token>).
+  receiptToken String    @unique
+  /// The failed payment this one was created to retry, if any.
+  retryOfId    String?
+  createdById  String?
+  paidAt       DateTime?
+  failedAt     DateTime?
+  refundedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([provider, providerLinkId])
+  @@index([businessId, createdAt])
+  @@index([provider, providerPaymentId])
+  @@index([contactId])
+  @@index([orderId])
+  @@map("payments")
+}
+
+/// The automated WhatsApp messages an owner can switch on.
+enum AutomationKind {
+  ORDER_CONFIRMED
+  ORDER_PAID
+  ORDER_SHIPPED
+  ABANDONED_CART
+  PAYMENT_LINK
+  PAYMENT_RECEIPT
+  PAYMENT_RETRY
+  REFUND_CONFIRMED
+  BOOKING_INVITE
+  BOOKING_CONFIRMED
+  BOOKING_REMINDER
+}
+
+/// Whether one automated message is on, and what it says.
+///
+/// `body` is used on the QR connection and inside WhatsApp's 24-hour reply
+/// window. Outside that window the Business API only allows an approved
+/// template, so API-tier accounts pick one in `templateId`; without it the
+/// message is sent only when the window is open.
+model AutomationSetting {
+  id           String           @id @default(cuid())
+  businessId   String
+  business     Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  kind         AutomationKind
+  enabled      Boolean          @default(false)
+  body         String           @db.Text
+  templateId   String?
+  template     MessageTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  /// For timed messages (abandoned cart), how long to wait.
+  delayMinutes Int?
+  updatedAt    DateTime         @updatedAt
+
+  @@unique([businessId, kind])
+  @@map("automation_settings")
+}
+
+/// A Google account connected for Sheets (and later Calendar).
+///
+/// Separate from the Google *sign-in* in `Account`: signing in asks only for
+/// who you are, and a business's spreadsheet access should not depend on which
+/// team member happens to log in with Google.
+model GoogleConnection {
+  id            String   @id @default(cuid())
+  businessId    String   @unique
+  business      Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  connectedById String
+  googleEmail   String?
+  /// Encrypted. The only long-lived Google credential we keep.
+  refreshToken  Bytes
+  scopes        String[] @default([])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("google_connections")
+}
+
+enum ExportFrequency {
+  DAILY
+  WEEKLY
+}
+
+/// A contact export to Google Sheets that runs on its own.
+model ScheduledExport {
+  id            String          @id @default(cuid())
+  businessId    String
+  business      Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  spreadsheetId String
+  sheetName     String          @default("Contacts")
+  segmentId     String?
+  segment       Segment?        @relation(fields: [segmentId], references: [id], onDelete: SetNull)
+  frequency     ExportFrequency
+  /// REPLACE rewrites the sheet each time; APPEND adds rows below.
+  mode          String          @default("REPLACE")
+  enabled       Boolean         @default(true)
+  nextRunAt     DateTime
+  lastRunAt     DateTime?
+  lastError     String?
+  createdAt     DateTime        @default(now())
+
+  @@index([enabled, nextRunAt])
+  @@index([businessId])
+  @@map("scheduled_exports")
+}
+
+enum ImportStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+  ROLLED_BACK
+}
+
+/// One import of contacts, so a bad one can be found and undone.
+model ImportBatch {
+  id           String       @id @default(cuid())
+  businessId   String
+  business     Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  source       String
+  sourceRef    String?
+  rowCount     Int          @default(0)
+  createdCount Int          @default(0)
+  updatedCount Int          @default(0)
+  errorCount   Int          @default(0)
+  /// The first few hundred rows that could not be imported, and why.
+  errors       Json         @default("[]")
+  status       ImportStatus @default(PROCESSING)
+  createdById  String?
+  createdAt    DateTime     @default(now())
+  completedAt  DateTime?
+  rolledBackAt DateTime?
+
+  @@index([businessId, createdAt])
+  @@map("import_batches")
+}
+
+/// A business's Calendly account.
+model CalendlyConnection {
+  id               String   @id @default(cuid())
+  businessId       String   @unique
+  business         Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  /// The page customers book on. All that is needed to send the link.
+  bookingUrl       String
+  /// A Calendly personal access token, encrypted. Needed only to register the
+  /// webhook that tells us when somebody books.
+  accessToken      Bytes?
+  userUri          String?
+  organizationUri  String?
+  webhookUri       String?
+  /// The key Calendly signs webhooks with, encrypted. We choose it.
+  signingKey       Bytes?
+  webhookPathToken String   @unique
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("calendly_connections")
+}
+
+enum BookingProvider {
+  CALENDLY
+  GOOGLE
+}
+
+enum BookingStatus {
+  BOOKED
+  CANCELED
+}
+
+/// A meeting a contact booked.
+model Booking {
+  id                String          @id @default(cuid())
+  businessId        String
+  business          Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contactId         String?
+  contact           Contact?        @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  provider          BookingProvider
+  /// Calendly's invitee URI — unique per booking.
+  providerEventId   String
+  eventName         String?
+  startTime         DateTime
+  endTime           DateTime?
+  status            BookingStatus   @default(BOOKED)
+  inviteeName       String?
+  inviteeEmail      String?
+  inviteePhone      String?
+  cancelUrl         String?
+  rescheduleUrl     String?
+  /// Set the moment each reminder is claimed, so no reminder goes twice.
+  reminder24hSentAt DateTime?
+  reminder1hSentAt  DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@unique([businessId, provider, providerEventId])
+  @@index([businessId, startTime])
+  @@index([status, startTime])
+  @@index([contactId])
+  @@map("bookings")
+}
+
+enum ProductSource {
+  SHOPIFY
+  MANUAL
+}
+
+/// A product the agents may talk about, with an embedding for search.
+///
+/// The Sales and Personal Shopper agents are given the few products closest
+/// to what the customer asked, with live price and stock, rather than being
+/// left to guess (docs/Rules.md §5 — no fabricated business information).
+model Product {
+  id          String        @id @default(cuid())
+  businessId  String
+  business    Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  source      ProductSource
+  /// Shopify's product id, or a SKU/handle for manually added products.
+  externalId  String
+  title       String
+  description String        @default("") @db.Text
+  vendor      String?
+  productType String?
+  tags        String[]      @default([])
+  priceMin    Decimal?      @db.Decimal(14, 2)
+  priceMax    Decimal?      @db.Decimal(14, 2)
+  currency    String?
+  /// Total units in stock across variants, when the store tracks it.
+  inventory   Int?
+  available   Boolean       @default(true)
+  url         String?
+  imageUrl    String?
+
+  /// pgvector column, 768 dimensions (Gemini text embeddings). Written and
+  /// read with raw SQL in lib/catalog.ts, since Prisma cannot express it.
+  embedding    Unsupported("vector(768)")?
+  /// A hash of the text that was embedded, so unchanged products aren't
+  /// re-embedded on every sync.
+  embeddedHash String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([businessId, source, externalId])
+  @@index([businessId])
+  @@map("products")
 }

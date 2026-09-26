@@ -63,6 +63,8 @@ export type BusinessNumbers = {
     chatwise: number;
     /** Bulk messages (Phase 12). Not replies at all — see the note below. */
     campaigns: number;
+    /** Order updates, receipts, reminders (2026-09-26). Not replies either. */
+    automations: number;
   };
   conversations: {
     /** Threads with something said in them during the period. */
@@ -158,6 +160,7 @@ export async function readBusinessNumbers(
       you: count("OUTBOUND", "HUMAN"),
       chatwise: count("OUTBOUND", "SYSTEM"),
       campaigns: count("OUTBOUND", "CAMPAIGN"),
+      automations: count("OUTBOUND", "AUTOMATION"),
     },
     conversations: {
       active: activeConversations,
@@ -230,7 +233,7 @@ async function measureAnswerTime(
     // A campaign message is the business broadcasting, not answering. Skipped
     // entirely rather than `continue`d after taking the wait, so the person is
     // still recorded as waiting for a real reply.
-    if (row.author === "CAMPAIGN") continue;
+    if (row.author === "CAMPAIGN" || row.author === "AUTOMATION") continue;
 
     const started = waitingSince.get(row.conversationId);
 

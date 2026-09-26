@@ -3,7 +3,7 @@
 // Saving this marks setup finished, which is what lets the dashboard open.
 
 import { apiError, unexpectedError } from "@/lib/api-response";
-import { getApiUser } from "@/lib/auth";
+import { getApiUser, refuseUnlessOwner } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getOrCreateBusiness } from "@/lib/onboarding";
 import { isValid, validateBotBehavior } from "@/lib/validation/onboarding";
@@ -14,6 +14,10 @@ export async function POST(request: Request) {
     if (!user) {
       return apiError("Please log in and try again.", "NOT_AUTHENTICATED", 401);
     }
+
+    // Account settings belong to the owner, not the whole team.
+    const denied = await refuseUnlessOwner(user.id);
+    if (denied) return denied;
 
     const business = await getOrCreateBusiness(user.id);
 

@@ -16,10 +16,13 @@ import { Button } from "@/components/ui/button";
 
 export function DashboardShell({
   connection,
+  isOwner = true,
   userMenu,
   children,
 }: {
   connection: { type: "QR" | "API"; status: string } | null;
+  /** False for team members, who don't see owner-only pages in the menu. */
+  isOwner?: boolean;
   /** Rendered on the server — who's signed in, and the log-out button. */
   userMenu: ReactNode;
   children: ReactNode;
@@ -30,6 +33,7 @@ export function DashboardShell({
     <div className="flex flex-1">
       <Sidebar
         connection={connection}
+        isOwner={isOwner}
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
       />

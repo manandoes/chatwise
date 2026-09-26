@@ -7,7 +7,7 @@
 import "server-only";
 
 import { apiError } from "@/lib/api-response";
-import { getApiUser } from "@/lib/auth";
+import { getApiUser, refuseUnlessOwner } from "@/lib/auth";
 import { getOrCreateBusiness } from "@/lib/onboarding";
 
 type Found = {
@@ -28,8 +28,10 @@ type Found = {
 type Refused = { ok: false; response: Response };
 
 /** Same as `requireQrConnection`, but for accounts on the official API. */
-export async function requireApiConnection(): Promise<Found | Refused> {
-  const found = await requireConnection();
+export async function requireApiConnection(
+  options: { ownerOnly?: boolean } = {},
+): Promise<Found | Refused> {
+  const found = await requireConnection(options.ownerOnly ?? true);
   if (!found.ok) return found;
 
   if (found.connection.type !== "API") {
@@ -53,8 +55,10 @@ export async function requireApiConnection(): Promise<Found | Refused> {
  * the official API rather than the QR connection — an account is one or the
  * other, never both (docs/PRD.md §3.1).
  */
-export async function requireQrConnection(): Promise<Found | Refused> {
-  const found = await requireConnection();
+export async function requireQrConnection(
+  options: { ownerOnly?: boolean } = {},
+): Promise<Found | Refused> {
+  const found = await requireConnection(options.ownerOnly ?? true);
   if (!found.ok) return found;
 
   if (found.connection.type !== "QR") {
@@ -72,7 +76,7 @@ export async function requireQrConnection(): Promise<Found | Refused> {
 }
 
 /** The signed-in customer's connection, whichever type it is. */
-async function requireConnection(): Promise<Found | Refused> {
+async function requireConnection(ownerOnly: boolean): Promise<Found | Refused> {
   const user = await getApiUser();
 
   if (!user) {
@@ -84,6 +88,13 @@ async function requireConnection(): Promise<Found | Refused> {
         401,
       ),
     };
+  }
+
+  // Connecting, disconnecting and test sends are the owner's to do. Team
+  // members may still see whether the number is connected.
+  if (ownerOnly) {
+    const denied = await refuseUnlessOwner(user.id);
+    if (denied) return { ok: false, response: denied };
   }
 
   const business = await getOrCreateBusiness(user.id);

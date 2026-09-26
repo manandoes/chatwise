@@ -14,7 +14,7 @@ import { cancelPlan, startSubscription } from "@/lib/subscription";
 /** Start a plan, or move to a different one. */
 export async function POST(request: Request) {
   try {
-    const found = await requireApiBusiness();
+    const found = await requireApiBusiness({ ownerOnly: true });
     if (!found.ok) return found.response;
 
     if (!isBillingConfigured()) {
@@ -78,7 +78,7 @@ export async function POST(request: Request) {
 /** Cancel, at the end of the period already paid for. */
 export async function DELETE() {
   try {
-    const found = await requireApiBusiness();
+    const found = await requireApiBusiness({ ownerOnly: true });
     if (!found.ok) return found.response;
 
     if (!isBillingConfigured()) {

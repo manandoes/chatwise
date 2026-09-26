@@ -26,6 +26,7 @@
 import "server-only";
 
 import { db } from "../lib/db.ts";
+import { linkConversationToContact } from "../lib/contacts.ts";
 import { checkCampaignQuota, checkMessageQuota } from "../lib/usage.ts";
 import { capabilitiesFor } from "../whatsapp-connectors/capabilities.ts";
 import { connectorFor } from "../whatsapp-connectors/index.ts";
@@ -347,8 +348,11 @@ export async function buildCampaign(input: NewCampaign): Promise<BuildResult> {
           contactName: contact.contactName,
         },
         update: {},
-        select: { id: true },
+        select: { id: true, businessId: true, contactPhone: true, contactName: true, contactId: true },
       });
+
+      // A typed number is a new CRM contact too (lib/contacts.ts).
+      await linkConversationToContact(conversation);
 
       return { ...contact, conversationId: conversation.id };
     }),

@@ -277,7 +277,9 @@ export function ConversationThread({
                         ? "You"
                         : message.author === "CAMPAIGN"
                           ? "A campaign you sent"
-                          : agentName}
+                          : message.author === "AUTOMATION"
+                            ? "Automated message"
+                            : agentName}
                   {" · "}
                   {formatWhen(new Date(message.at))}
                 </p>

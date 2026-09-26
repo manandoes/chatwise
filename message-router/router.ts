@@ -30,6 +30,7 @@ import { isAiConfigured } from "../lib/ai-client.ts";
 import { decryptStoredKey } from "../lib/ai-credentials.ts";
 import { isOpenNow, readBusinessHours } from "../lib/business-hours.ts";
 import { applyAgentUpdate, readLeadSnapshot } from "../lib/leads.ts";
+import { linkConversationToContact } from "../lib/contacts.ts";
 import { checkMessageQuota } from "../lib/usage.ts";
 import {
   OPT_IN_CONFIRMATION,
@@ -168,6 +169,10 @@ async function route(
     },
     update: { lastMessageAt: receivedAt },
   });
+
+  // Every thread belongs to a CRM contact (lib/contacts.ts). Cheap when the
+  // link already exists, which is every message after the first.
+  const contactId = await linkConversationToContact(conversation);
 
   // Fill in a name if we never had one. Never overwrite one we do have: the
   // name comes from whatever the customer set on their own phone, and a person

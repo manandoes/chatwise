@@ -20,6 +20,7 @@
 import "server-only";
 
 import { db } from "../lib/db.ts";
+import { setConsent } from "../lib/consent.ts";
 
 /** What gets appended to a bulk message that doesn't already say it. */
 export const OPT_OUT_LINE = "Reply STOP to unsubscribe.";
@@ -64,27 +65,43 @@ export const OPT_OUT_CONFIRMATION =
 export const OPT_IN_CONFIRMATION =
   "You're subscribed again. You'll hear from us with updates from now on.";
 
-/** Records that this contact does not want bulk messages. */
+/**
+ * Records that this contact does not want to be messaged.
+ *
+ * Goes through lib/consent.ts, which updates the contact's opt-in status, this
+ * file's OptOut list and the consent audit log in one transaction.
+ */
 export async function recordOptOut(
   businessId: string,
   contactPhone: string,
   reason: string,
 ): Promise<void> {
-  await db.optOut.upsert({
-    where: { businessId_contactPhone: { businessId, contactPhone } },
-    create: { businessId, contactPhone, reason },
-    // Already opted out and saying so again changes nothing, but it should not
-    // be an error either.
-    update: {},
+  await setConsent({
+    businessId,
+    phone: contactPhone,
+    to: "OPTED_OUT",
+    source: "whatsapp",
+    detail: `replied "${reason.slice(0, 40)}"`,
   });
 }
 
-/** Undoes it, at the contact's own request and never at anybody else's. */
+/**
+ * Undoes it, at the contact's own request and never at anybody else's.
+ *
+ * Replying START is an explicit yes, so the contact becomes OPTED_IN rather
+ * than merely "not opted out".
+ */
 export async function removeOptOut(
   businessId: string,
   contactPhone: string,
 ): Promise<void> {
-  await db.optOut.deleteMany({ where: { businessId, contactPhone } });
+  await setConsent({
+    businessId,
+    phone: contactPhone,
+    to: "OPTED_IN",
+    source: "whatsapp",
+    detail: "replied START",
+  });
 }
 
 /** Whether this one person has opted out. Checked as each message goes out. */

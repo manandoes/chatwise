@@ -49,7 +49,7 @@ export type ThreadMessage = {
   id: string;
   body: string;
   fromCustomer: boolean;
-  author: "CONTACT" | "AGENT" | "HUMAN" | "SYSTEM" | "CAMPAIGN";
+  author: "CONTACT" | "AGENT" | "HUMAN" | "SYSTEM" | "CAMPAIGN" | "AUTOMATION";
   failureReason: string | null;
   at: string;
 };
@@ -560,7 +560,7 @@ function toThreadMessage(row: {
   id: string;
   body: string;
   direction: "INBOUND" | "OUTBOUND";
-  author: "CONTACT" | "AGENT" | "HUMAN" | "SYSTEM" | "CAMPAIGN";
+  author: "CONTACT" | "AGENT" | "HUMAN" | "SYSTEM" | "CAMPAIGN" | "AUTOMATION";
   failureReason: string | null;
   createdAt: Date;
 }): ThreadMessage {
