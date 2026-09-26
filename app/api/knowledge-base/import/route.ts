@@ -9,7 +9,7 @@
 import { readGeminiApiKey } from "@/lib/ai-credentials";
 import { apiError, unexpectedError } from "@/lib/api-response";
 import { getApiUser } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { findMembership } from "@/lib/team";
 import { parseUploadedKnowledge } from "@/lib/knowledge-import";
 
 export async function POST(request: Request) {
@@ -20,10 +20,10 @@ export async function POST(request: Request) {
       return apiError("Please sign in again.", "NOT_AUTHENTICATED", 401);
     }
 
-    const business = await db.business.findUnique({
-      where: { userId: user.id },
-      select: { id: true },
-    });
+    // Through the team membership, so team members edit the knowledge base
+    // of the business they work in (lib/team.ts).
+    const membership = await findMembership(user.id);
+    const business = membership ? { id: membership.businessId } : null;
 
     if (!business) {
       return apiError(

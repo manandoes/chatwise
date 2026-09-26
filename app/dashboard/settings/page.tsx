@@ -19,6 +19,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { requireUser } from "@/lib/auth";
+import { findMembership } from "@/lib/team";
 import { readBusinessHours } from "@/lib/business-hours";
 import { db } from "@/lib/db";
 
@@ -49,10 +50,13 @@ export default async function SettingsPage() {
   // Whether this account has its own AI key, and nothing more — the key itself
   // never leaves the server (docs/Rules.md §3). Null here means setup hasn't
   // created the business row yet, which reads the same as having no key.
-  const business = await db.business.findUnique({
-    where: { userId: sessionUser.id },
-    select: { id: true, geminiApiKey: true, maskContactPhone: true },
-  });
+  const membership = await findMembership(sessionUser.id);
+  const business = membership
+    ? await db.business.findUnique({
+        where: { id: membership.businessId },
+        select: { id: true, geminiApiKey: true, maskContactPhone: true },
+      })
+    : null;
 
   const businessHours = business ? await readBusinessHours(business.id) : null;
 

@@ -16,10 +16,12 @@ import { Button } from "@/components/ui/button";
 
 export function Sidebar({
   connection,
+  isOwner,
   isOpen,
   onClose,
 }: {
   connection: { type: "QR" | "API"; status: string } | null;
+  isOwner: boolean;
   isOpen: boolean;
   onClose: () => void;
 }) {
@@ -67,7 +69,9 @@ export function Sidebar({
               </h2>
 
               <ul className="space-y-0.5">
-                {group.items.map((item) => {
+                {group.items
+                  .filter((item) => isOwner || !item.ownerOnly)
+                  .map((item) => {
                   const isCurrent =
                     pathname === item.href ||
                     (item.href !== "/dashboard" &&

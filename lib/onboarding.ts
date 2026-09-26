@@ -9,6 +9,7 @@ import "server-only";
 
 import { getBot } from "@/bots/shared/bot-catalog";
 import { db } from "@/lib/db";
+import { findMembership } from "@/lib/team";
 import {
   ONBOARDING_STEPS,
   canReachStep,
@@ -27,18 +28,25 @@ export type { OnboardingSlug };
  * `Business.name` is nullable.
  */
 export async function getOrCreateBusiness(userId: string) {
-  const existing = await db.business.findUnique({
-    where: { userId },
-    include: { agent: true, connection: true },
-  });
+  // A team member works in the business that invited them, not one of their
+  // own (lib/team.ts). Owners are members too, so this covers everybody who
+  // has a business at all.
+  const membership = await findMembership(userId);
 
-  if (existing) return existing;
+  if (membership) {
+    const existing = await db.business.findUnique({
+      where: { id: membership.businessId },
+      include: { agent: true, connection: true },
+    });
+
+    if (existing) return existing;
+  }
 
   // Two tabs opening setup at once would both try to create this. The unique
   // index on userId means only one wins; the loser reads the winner's row.
   try {
     return await db.business.create({
-      data: { userId },
+      data: { userId, members: { create: { userId, role: "OWNER" } } },
       include: { agent: true, connection: true },
     });
   } catch {

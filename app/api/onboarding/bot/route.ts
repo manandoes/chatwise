@@ -6,7 +6,7 @@
 
 import { isSelectableBotType } from "@/bots/shared/bot-catalog";
 import { apiError, unexpectedError } from "@/lib/api-response";
-import { getApiUser } from "@/lib/auth";
+import { getApiUser, refuseUnlessOwner } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getOrCreateBusiness } from "@/lib/onboarding";
 
@@ -32,6 +32,10 @@ export async function POST(request: Request) {
 
     // Looked up by the signed-in user, so there is no id from the request to
     // forge (docs/Rules.md §3).
+    // Account settings belong to the owner, not the whole team.
+    const denied = await refuseUnlessOwner(user.id);
+    if (denied) return denied;
+
     const business = await getOrCreateBusiness(user.id);
 
     // Once setup is finished, changing the agent is a deliberate re-setup of

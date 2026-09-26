@@ -170,6 +170,14 @@ export default async function AnalyticsPage({
                   hint="Bulk messages you sent out. Counted here because they went out, but they aren't replies to anybody."
                 />
               )}
+              {numbers.repliedBy.automations > 0 && (
+                <Bar
+                  label="Automated messages"
+                  value={numbers.repliedBy.automations}
+                  total={numbers.messages.sent}
+                  hint="Order updates, receipts and reminders you switched on. They went out, but they aren't replies to anybody."
+                />
+              )}
             </div>
           </section>
 

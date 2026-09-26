@@ -14,7 +14,7 @@ import { requireQrConnection } from "@/lib/whatsapp-connection";
 
 export async function GET() {
   try {
-    const found = await requireQrConnection();
+    const found = await requireQrConnection({ ownerOnly: false });
     if (!found.ok) return found.response;
 
     // Ask Redis whether it is actually there, rather than assuming it is

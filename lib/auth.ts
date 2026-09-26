@@ -20,6 +20,8 @@ import { db } from "@/lib/db";
 import { fakePasswordCheck, verifyPassword } from "@/lib/password";
 import { takeFromBudget } from "@/lib/rate-limit";
 import { normalizeEmail } from "@/lib/validation/auth";
+import { findMembership } from "@/lib/team";
+import type { MemberRole } from "@/lib/generated/prisma/client";
 
 // Tells TypeScript that our sessions carry the user's id, so pages and API
 // routes can check who owns what (docs/Rules.md §3).
@@ -174,9 +176,18 @@ export async function getApiUser() {
  * anything in the request, so the id a caller supplies can only ever narrow
  * what they already own (docs/Rules.md §3).
  */
-export async function requireApiBusiness(): Promise<
-  { ok: true; businessId: string } | { ok: false; response: Response }
-> {
+export type ApiBusiness = {
+  ok: true;
+  businessId: string;
+  userId: string;
+  /** The signed-in person's membership row, for assignment and ownership. */
+  memberId: string;
+  role: MemberRole;
+};
+
+export async function requireApiBusiness(
+  options: { ownerOnly?: boolean } = {},
+): Promise<ApiBusiness | { ok: false; response: Response }> {
   const user = await getApiUser();
 
   if (!user) {
@@ -186,12 +197,11 @@ export async function requireApiBusiness(): Promise<
     };
   }
 
-  const business = await db.business.findUnique({
-    where: { userId: user.id },
-    select: { id: true },
-  });
+  // Found through the person's team membership, so a team member reaches the
+  // business they were invited to and nothing else (lib/team.ts).
+  const membership = await findMembership(user.id);
 
-  if (!business) {
+  if (!membership) {
     return {
       ok: false,
       response: apiError(
@@ -202,5 +212,36 @@ export async function requireApiBusiness(): Promise<
     };
   }
 
-  return { ok: true, businessId: business.id };
+  if (options.ownerOnly && membership.role !== "OWNER") {
+    return { ok: false, response: ownerOnlyResponse() };
+  }
+
+  return {
+    ok: true,
+    businessId: membership.businessId,
+    userId: user.id,
+    memberId: membership.memberId,
+    role: membership.role,
+  };
+}
+
+/**
+ * For routes that find their business another way (the setup wizard, the
+ * WhatsApp connection): returns the refusal to send when this user is a team
+ * member rather than an owner, or null when they may carry on.
+ */
+export async function refuseUnlessOwner(userId: string): Promise<Response | null> {
+  const membership = await findMembership(userId);
+
+  if (membership && membership.role !== "OWNER") return ownerOnlyResponse();
+
+  return null;
+}
+
+function ownerOnlyResponse(): Response {
+  return apiError(
+    "Only the account owner can change this. Ask them to do it for you.",
+    "NOT_AUTHORIZED",
+    403,
+  );
 }

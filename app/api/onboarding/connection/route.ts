@@ -4,7 +4,7 @@
 // (docs/PRD.md §3.1). One row per business, enforced by a unique index.
 
 import { apiError, unexpectedError } from "@/lib/api-response";
-import { getApiUser } from "@/lib/auth";
+import { getApiUser, refuseUnlessOwner } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getOrCreateBusiness } from "@/lib/onboarding";
 import { isConnectionType } from "@/lib/validation/onboarding";
@@ -28,6 +28,10 @@ export async function POST(request: Request) {
         { connectionType: "Pick one to carry on." },
       );
     }
+
+    // Account settings belong to the owner, not the whole team.
+    const denied = await refuseUnlessOwner(user.id);
+    if (denied) return denied;
 
     const business = await getOrCreateBusiness(user.id);
 

@@ -5,7 +5,14 @@ import {
   BarChart3,
   BookOpen,
   Bot,
+  CalendarDays,
+  Contact,
   CreditCard,
+  Filter,
+  KanbanSquare,
+  Package,
+  Plug,
+  UsersRound,
   LayoutDashboard,
   Megaphone,
   MessageSquareText,
@@ -28,6 +35,13 @@ const ICONS: Record<string, LucideIcon> = {
   CreditCard,
   Settings,
   MessageSquareText,
+  Contact,
+  KanbanSquare,
+  CalendarDays,
+  Package,
+  Plug,
+  UsersRound,
+  Filter,
 };
 
 export function NavIcon({

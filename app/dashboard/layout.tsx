@@ -12,6 +12,7 @@ import { DashboardShell } from "@/components/dashboard/shell";
 import { Button } from "@/components/ui/button";
 import { requireUser, signOut } from "@/lib/auth";
 import { getOnboardingState, pathForStep } from "@/lib/onboarding";
+import { findMembership } from "@/lib/team";
 
 export default async function DashboardLayout({
   children,
@@ -25,6 +26,8 @@ export default async function DashboardLayout({
   // send finished accounts the other way, so these two can't bounce forever.)
   const state = await getOnboardingState(user.id);
   if (!state.isComplete) redirect(pathForStep(state.nextStep));
+
+  const membership = await findMembership(user.id);
 
   const userMenu = (
     <div className="flex items-center gap-3">
@@ -55,6 +58,7 @@ export default async function DashboardLayout({
           ? { type: state.connection.type, status: state.connection.status }
           : null
       }
+      isOwner={(membership?.role ?? "OWNER") === "OWNER"}
       userMenu={userMenu}
     >
       {children}
