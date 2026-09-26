@@ -2120,6 +2120,45 @@ that is an argument rather than a look.
 
 ---
 
+## Session Update — 2026-09-26 (CRM screens)
+
+- **Completed:** Contacts (list with search/tag/segment filters, a page per
+  contact with details, tags, consent and its log, orders, payments, deals,
+  bookings), Segments (filter builder with a live count and plain-English
+  read-back), auto-tag rules, the Deals board with an activity log, segment
+  broadcasts and template variables in the campaign builder, and "Check with
+  Meta" template sync (plus a six-hourly job).
+- **Verified:** typecheck, lint; 37 API/page checks through a real signed-in
+  session against `next dev` (including another business's ids being refused
+  and a team member being refused rule changes); 10 checks of segment
+  campaigns (variables, opt-outs, only-opted-in, the QR cap).
+  **Not verified:** Meta template sync against a real WhatsApp Business
+  Account.
+
+### Decisions and assumptions (please confirm)
+
+- **A segment broadcast is resolved when the campaign is written**, not when
+  it falls due (the schema comment said the latter). That way the QR cap,
+  opt-outs and the plan's quota are checked against the real list before
+  anything is scheduled, with no second path through the sender. Opt-outs are
+  still re-checked as each message goes. A segment may reach at most 10,000
+  contacts per campaign.
+- **Placeholders other than {name} are typed once per campaign** and saved
+  on `Campaign.variableValues`; approved templates get them in the order they
+  first appear in the body (`MessageTemplate.variables`), which is Meta's
+  positional order. Templates using Meta's *named* parameters aren't
+  supported yet.
+- **Template sync imports approved Meta templates only if they contain an
+  opt-out line** (Rules.md §8); others are counted and reported. Meta's
+  PAUSED/DISABLED statuses show as "Rejected" (not sendable).
+- **Auto-tag rules are owner-only**; segments, contacts and deals are open
+  to every team member. Adding a tag by hand to someone a rule tagged makes
+  it a manual tag, which rules then never remove.
+- **A person's edit to a contact overwrites** name/email/language; automated
+  sources only ever fill gaps.
+
+---
+
 ## Session Update — [DATE]
 - Worked on:
 - Completed:

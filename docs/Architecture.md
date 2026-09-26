@@ -125,6 +125,12 @@ Designed so a non-technical person can open the file tree and understand what's 
 │   │
 │   ├── dashboard/                      # Everything behind login
 │   │   ├── page.tsx                    #   Overview
+│   │   ├── contacts/                   #   The CRM contact list, and one contact's page
+│   │   ├── segments/page.tsx           #   Saved filters + auto-tag rules
+│   │   ├── deals/page.tsx              #   Pipeline board (drag, or the stage menu)
+│   │   ├── payments/page.tsx           #   Sending payment links; what became of them
+│   │   ├── integrations/page.tsx       #   Shopify, payment accounts, automated messages,
+│   │   │                               #     failed jobs, privacy requests (owner only)
 │   │   ├── my-bot/page.tsx             #   The account's ONE agent: view and edit its config.
 │   │   │                               #   Named for what the customer calls it (docs/PRD.md §6);
 │   │   │                               #   deliberately singular — there is no "agents" list.
@@ -259,6 +265,7 @@ Designed so a non-technical person can open the file tree and understand what's 
 │   ├── segments.ts                     #   The saved-filter language, as a query and in words
 │   ├── tag-rules.ts                    #   Auto-tags: added and removed by rules; manual tags kept
 │   ├── catalog.ts                      #   Products + meaning-based search (pgvector)
+│   ├── deals.ts                        #   The pipeline board; every change logged in one transaction
 │   ├── automations.ts                  #   Every automated WhatsApp message goes out through here
 │   ├── jobs.ts                         #   Putting background work on the queue
 │   ├── features.ts                     #   Which integrations are switched on; the public app URL

@@ -299,3 +299,111 @@ export function isUniqueViolation(error: unknown): boolean {
     (error as { code?: string }).code === "P2002"
   );
 }
+
+// ─── The Contacts screens ───────────────────────────────────────────────────
+
+/**
+ * A person's edit from the dashboard. Unlike `upsertContact`, which only fills
+ * gaps, this overwrites — a human edit is the one that wins (docs/Rules.md §5).
+ */
+export async function updateContactDetails(
+  businessId: string,
+  contactId: string,
+  details: { name?: string | null; email?: string | null; language?: string | null },
+): Promise<boolean> {
+  const data: Prisma.ContactUpdateManyMutationInput = {};
+
+  if (details.name !== undefined) data.name = details.name?.trim().slice(0, 120) || null;
+  if (details.email !== undefined) data.email = details.email?.trim().toLowerCase().slice(0, 200) || null;
+  if (details.language !== undefined) data.language = details.language?.trim().toLowerCase().slice(0, 12) || null;
+
+  const updated = await db.contact.updateMany({ where: { id: contactId, businessId }, data });
+
+  return updated.count > 0;
+}
+
+/**
+ * A tag a person put on. If a rule had already added the same tag, it
+ * becomes the person's — so the rule can no longer take it off again.
+ */
+export async function addManualTag(businessId: string, contactId: string, name: string): Promise<boolean> {
+  const contact = await db.contact.findFirst({ where: { id: contactId, businessId }, select: { id: true } });
+
+  if (!contact) return false;
+
+  const clean = name.trim().slice(0, 40);
+  const tag = await db.tag.upsert({
+    where: { businessId_name: { businessId, name: clean } },
+    create: { businessId, name: clean },
+    update: {},
+    select: { id: true },
+  });
+
+  await db.contactTag.upsert({
+    where: { contactId_tagId: { contactId: contact.id, tagId: tag.id } },
+    create: { contactId: contact.id, tagId: tag.id, businessId, source: "MANUAL" },
+    update: { source: "MANUAL" },
+  });
+
+  return true;
+}
+
+/** Takes a tag off, whoever put it there. A rule may add it back later. */
+export async function removeTag(businessId: string, contactId: string, name: string): Promise<boolean> {
+  const removed = await db.contactTag.deleteMany({
+    where: { businessId, contactId, tag: { name } },
+  });
+
+  return removed.count > 0;
+}
+
+export const CONTACTS_PAGE_SIZE = 50;
+
+/** One page of contacts, newest first, narrowed by search text and a where clause. */
+export async function listContactsPage(
+  businessId: string,
+  options: { search?: string; where?: Prisma.ContactWhereInput; page?: number },
+) {
+  const search = options.search?.trim();
+  const digits = search?.replace(/\D/g, "");
+  const where: Prisma.ContactWhereInput = {
+    AND: [
+      { businessId },
+      options.where ?? {},
+      search
+        ? {
+            OR: [
+              { name: { contains: search, mode: "insensitive" } },
+              { email: { contains: search, mode: "insensitive" } },
+              ...(digits && digits.length >= 3 ? [{ phone: { contains: digits } }] : []),
+            ],
+          }
+        : {},
+    ],
+  };
+
+  const page = Math.max(1, options.page ?? 1);
+  const [total, rows] = await Promise.all([
+    db.contact.count({ where }),
+    db.contact.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * CONTACTS_PAGE_SIZE,
+      take: CONTACTS_PAGE_SIZE,
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        email: true,
+        optInStatus: true,
+        totalSpent: true,
+        currency: true,
+        orderCount: true,
+        lastOrderAt: true,
+        tags: { select: { tag: { select: { name: true } } }, orderBy: { createdAt: "asc" } },
+      },
+    }),
+  ]);
+
+  return { total, page, pages: Math.max(1, Math.ceil(total / CONTACTS_PAGE_SIZE)), rows };
+}
