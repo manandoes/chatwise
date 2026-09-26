@@ -22,6 +22,7 @@ import {
 import { processShopifyWebhook, sendAbandonedCartReminder } from "../integrations/shopify/sync.ts";
 import { applyPaymentEvent, readProviderEvent } from "../integrations/payments/links.ts";
 import { db } from "../lib/db.ts";
+import { businessesToSync, syncTemplatesFromMeta } from "../campaigns/templates/meta-sync.ts";
 
 export type JobContext = {
   id: string;
@@ -195,6 +196,23 @@ const evaluateAllRulesHandler: JobHandler = {
   },
 };
 
+/** Every six hours: each Business API account's template statuses from Meta. */
+const syncAllTemplatesHandler: JobHandler = {
+  safeToRepeat: true,
+  async run() {
+    const businessIds = await businessesToSync();
+    let failed = 0;
+
+    for (const businessId of businessIds) {
+      const result = await syncTemplatesFromMeta(businessId);
+
+      if (!result.ok) failed += 1;
+    }
+
+    return { status: "done", note: `${businessIds.length} accounts, ${failed} couldn't be checked` };
+  },
+};
+
 export const JOB_HANDLERS: Record<string, JobHandler> = {
   "automation.send": automationSendHandler,
   "shopify.webhook": shopifyWebhookHandler,
@@ -206,5 +224,6 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   "catalog.embed": catalogEmbedHandler,
   "tags.evaluate_rules": evaluateRulesHandler,
   "tags.evaluate_all_rules": evaluateAllRulesHandler,
+  "templates.sync_all": syncAllTemplatesHandler,
 };
 

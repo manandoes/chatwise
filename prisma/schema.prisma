@@ -833,13 +833,14 @@ model Campaign {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  /// A saved segment to send to instead of a hand-picked list. The list is
-  /// worked out when the campaign falls due, not when it was written, so a
-  /// broadcast scheduled for Friday reaches whoever matches on Friday.
+  /// The saved segment this was sent to, if any. The segment is turned into
+  /// recipient rows when the campaign is written, so the QR cap, opt-outs and
+  /// the plan's quota are all checked against the real list before anything
+  /// is scheduled (campaigns/send-campaign.ts). Opt-outs are checked again
+  /// as each message falls due.
   segmentId       String?
   segment         Segment?  @relation(fields: [segmentId], references: [id], onDelete: SetNull)
-  /// When the segment was turned into recipient rows. Null until then; the
-  /// sender will not call a segment campaign finished before it is set.
+  /// When the segment was turned into recipient rows.
   audienceBuiltAt DateTime?
   /// Only send to contacts who have said yes (OPTED_IN), not merely those who
   /// haven't said no.

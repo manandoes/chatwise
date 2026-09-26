@@ -8,6 +8,7 @@ import { ArrowLeft } from "lucide-react";
 import { OPT_OUT_LINE } from "@/campaigns/opt-out";
 import { listTemplates } from "@/campaigns/templates/saved-templates";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { MetaSyncButton } from "@/components/dashboard/meta-sync-button";
 import { TemplateEditor } from "@/components/dashboard/template-editor";
 import { requireUser } from "@/lib/auth";
 import { getOnboardingState } from "@/lib/onboarding";
@@ -47,6 +48,8 @@ export default async function TemplatesPage() {
         }
       />
 
+      {connection.type === "API" && <MetaSyncButton />}
+
       <TemplateEditor
         templates={templates.map((template) => ({
           id: template.id,
@@ -56,6 +59,7 @@ export default async function TemplatesPage() {
           metaLanguage: template.metaLanguage,
           approval: template.approval,
           approvalLabel: template.approvalLabel,
+          rejectionReason: template.rejectionReason,
         }))}
         needsMetaApproval={capabilities.requiresApprovedTemplates}
         optOutLine={OPT_OUT_LINE}

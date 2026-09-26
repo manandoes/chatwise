@@ -33,6 +33,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { NativeSelect } from "@/components/dashboard/form-bits";
 import { describeRejected, parsePhoneList } from "@/campaigns/phone-list";
 import {
   personalise,
@@ -66,15 +67,39 @@ export type BuilderTemplate = {
   metaName: string | null;
 };
 
+/** A saved segment, with how many in it could be sent to right now. */
+export type BuilderSegment = {
+  id: string;
+  name: string;
+  description: string;
+  /** Everyone who hasn't opted out. */
+  reachable: number;
+  /** Only those who opted in. */
+  optedIn: number;
+};
+
+/**
+ * Fills the placeholders typed into the boxes under the message, the same
+ * way campaigns/send-campaign.ts does on the server. {name} is left for each
+ * person.
+ */
+function fillVariables(body: string, values: Record<string, string>): string {
+  return body.replace(/\{([a-z0-9_]+)\}/gi, (whole, key: string) =>
+    key.toLowerCase() === "name" ? whole : values[key]?.trim() || whole,
+  );
+}
+
 export function CampaignBuilder({
   tier,
   contacts,
   templates,
+  segments,
   optOutLine,
 }: {
   tier: "QR" | "API";
   contacts: BuilderContact[];
   templates: BuilderTemplate[];
+  segments: BuilderSegment[];
   /** The line appended to QR-tier messages that don't already say it. */
   optOutLine: string;
 }) {
@@ -88,11 +113,20 @@ export function CampaignBuilder({
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [phoneList, setPhoneList] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
+  const [segmentId, setSegmentId] = useState("");
+  const [onlyOptedIn, setOnlyOptedIn] = useState(false);
+  const [variableValues, setVariableValues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
 
   const sendable = contacts.filter((contact) => !contact.optedOut);
-  const unfilled = useMemo(() => unfilledPlaceholders(body), [body]);
+  // Every placeholder except {name} gets a box to type its value into; the
+  // ones still empty are what blocks sending.
+  const placeholders = useMemo(() => unfilledPlaceholders(body).map((one) => one.slice(1, -1)), [body]);
+  const filledBody = fillVariables(body, variableValues);
+  const unfilled = useMemo(() => unfilledPlaceholders(filledBody), [filledBody]);
+  const segment = segments.find((one) => one.id === segmentId) ?? null;
+  const fromSegment = segment ? (onlyOptedIn ? segment.optedIn : segment.reachable) : 0;
 
   // The same parser the server uses (campaigns/phone-list.ts), run here only so
   // the count and the complaints appear while somebody is still typing. What
@@ -112,7 +146,9 @@ export function CampaignBuilder({
     (entry) => !chosenPhones.has(entry.phone),
   ).length;
 
-  const total = chosen.size + addedByHand;
+  // A segment member may also be picked or typed; the server counts them
+  // once. This is the most it could be, which is the safe way to show a cap.
+  const total = chosen.size + addedByHand + fromSegment;
   const overCap = cap !== null && total > cap;
 
   // How many of the picker's contacts "select all" may take. Typed numbers have
@@ -181,6 +217,9 @@ export function CampaignBuilder({
           conversationIds: [...chosen],
           phoneList,
           warningAcknowledged: acknowledged,
+          segmentId: segmentId || null,
+          onlyOptedIn,
+          variableValues,
         }),
       });
 
@@ -201,9 +240,9 @@ export function CampaignBuilder({
   }
 
   const preview = personalise(
-    sendsAsMetaTemplate || body.toLowerCase().includes("unsubscribe")
-      ? body
-      : `${body.trimEnd()}\n\n${optOutLine}`,
+    sendsAsMetaTemplate || filledBody.toLowerCase().includes("unsubscribe")
+      ? filledBody
+      : `${filledBody.trimEnd()}\n\n${optOutLine}`,
     contacts.find((contact) => chosen.has(contact.conversationId))?.contactName ??
       typed.numbers.find((entry) => entry.name)?.name ??
       null,
@@ -307,10 +346,30 @@ export function CampaignBuilder({
               </p>
             )}
 
+            {placeholders.length > 0 && (
+              <div className="grid gap-3 rounded-lg border border-border p-4 sm:grid-cols-2">
+                <p className="text-small text-text-secondary sm:col-span-2">
+                  Fill in the blanks. These are the same for everybody;{" "}
+                  {"{name}"} is filled in for each person.
+                </p>
+                {placeholders.map((key) => (
+                  <div key={key} className="space-y-1">
+                    <Label htmlFor={`campaign-var-${key}`}>{`{${key}}`}</Label>
+                    <Input
+                      id={`campaign-var-${key}`}
+                      value={variableValues[key] ?? ""}
+                      onChange={(event) =>
+                        setVariableValues((current) => ({ ...current, [key]: event.target.value }))
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
             {unfilled.length > 0 && (
               <p className="text-small text-warning">
-                Still to fill in: {unfilled.join(", ")}. Only {"{name}"} is
-                filled in for you.
+                Still to fill in: {unfilled.join(", ")}.
               </p>
             )}
           </div>
@@ -343,6 +402,40 @@ export function CampaignBuilder({
         </CardHeader>
 
         <CardContent className="space-y-4">
+          {segments.length > 0 && (
+            <div className="space-y-2 border-b border-border pb-4">
+              <Label htmlFor="campaign-segment">Send to a segment</Label>
+              <NativeSelect
+                id="campaign-segment"
+                value={segmentId}
+                onChange={(event) => setSegmentId(event.target.value)}
+                className="max-w-md"
+              >
+                <option value="">No segment</option>
+                {segments.map((one) => (
+                  <option key={one.id} value={one.id}>
+                    {one.name} ({one.reachable})
+                  </option>
+                ))}
+              </NativeSelect>
+              {segment && (
+                <>
+                  <p className="text-xs text-text-secondary">{segment.description}.</p>
+                  <label className="flex items-center gap-2 text-small text-text-primary">
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-primary"
+                      checked={onlyOptedIn}
+                      onChange={(event) => setOnlyOptedIn(event.target.checked)}
+                    />
+                    Only people who opted in ({segment.optedIn}), not everyone who
+                    hasn&rsquo;t opted out
+                  </label>
+                </>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center gap-3">
             <Button
               type="button"
@@ -374,8 +467,8 @@ export function CampaignBuilder({
               className={`text-small ${overCap ? "text-error" : "text-text-secondary"}`}
             >
               {total} {total === 1 ? "person" : "people"}
-              {addedByHand > 0 &&
-                ` (${chosen.size} picked, ${addedByHand} typed in)`}
+              {(addedByHand > 0 || fromSegment > 0) &&
+                ` (${chosen.size} picked, ${addedByHand} typed in${fromSegment > 0 ? `, up to ${fromSegment} from the segment` : ""})`}
               {cap !== null && ` of ${cap} allowed`}
             </span>
           </div>
@@ -525,7 +618,7 @@ export function CampaignBuilder({
         )}
         {isSending
           ? "Starting…"
-          : `Send to ${chosen.size} ${chosen.size === 1 ? "person" : "people"}`}
+          : `Send to ${total} ${total === 1 ? "person" : "people"}`}
       </Button>
     </div>
   );

@@ -19,6 +19,8 @@ import { listTemplates } from "@/campaigns/templates/saved-templates";
 import { CampaignBuilder } from "@/components/dashboard/campaign-builder";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { requireUser } from "@/lib/auth";
+import { db } from "@/lib/db";
+import { describeSegmentFilter, segmentWhere, storedFilter } from "@/lib/segments";
 import { getOnboardingState } from "@/lib/onboarding";
 
 export const metadata: Metadata = { title: "New campaign" };
@@ -32,10 +34,41 @@ export default async function NewCampaignPage() {
   // only fail.
   if (!connection) redirect("/dashboard/connect-whatsapp");
 
-  const [contacts, templates] = await Promise.all([
+  const [contacts, templates, savedSegments] = await Promise.all([
     listSendableContacts(business.id),
     listTemplates(business.id),
+    db.segment.findMany({
+      where: { businessId: business.id },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, filter: true },
+    }),
   ]);
+
+  // How many each segment could reach now. A segment whose filter can't be
+  // read is left out rather than offered and refused.
+  const segments = (
+    await Promise.all(
+      savedSegments.map(async (segment) => {
+        const filter = storedFilter(segment.filter);
+
+        if (!filter) return null;
+
+        const where = segmentWhere(business.id, filter);
+        const [reachable, optedIn] = await Promise.all([
+          db.contact.count({ where: { AND: [where, { optInStatus: { not: "OPTED_OUT" } }] } }),
+          db.contact.count({ where: { AND: [where, { optInStatus: "OPTED_IN" }] } }),
+        ]);
+
+        return {
+          id: segment.id,
+          name: segment.name,
+          description: describeSegmentFilter(filter),
+          reachable,
+          optedIn,
+        };
+      }),
+    )
+  ).filter((segment) => segment !== null);
 
   return (
     <div className="space-y-8">
@@ -70,6 +103,7 @@ export default async function NewCampaignPage() {
           approvalLabel: template.approvalLabel,
           metaName: template.metaName,
         }))}
+        segments={segments}
         optOutLine={OPT_OUT_LINE}
       />
     </div>

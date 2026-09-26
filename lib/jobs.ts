@@ -98,6 +98,7 @@ const JOB_LABELS: Record<string, string> = {
   "tags.evaluate_rules": "Applying auto-tag rules",
   "tags.evaluate_all_rules": "Daily auto-tag refresh",
   "templates.sync": "Checking template approval with Meta",
+  "templates.sync_all": "Checking template approval with Meta",
   "ai.summarize": "Summarising a conversation",
   "catalog.embed": "Indexing products for the assistant",
 };

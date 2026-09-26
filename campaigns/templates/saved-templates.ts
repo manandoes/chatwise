@@ -60,7 +60,20 @@ export type CheckedTemplate = {
   metaLanguage: string | null;
   approval: ApprovalValue;
   category: string | null;
+  /** The placeholders, in the order they first appear — Meta's order. */
+  variables: string[];
 };
+
+/**
+ * The placeholders in a message, first appearance first: "Hi {name}, {offer}
+ * ends {date}" gives ["name", "offer", "date"]. For an approved template this
+ * is the order Meta expects the values in, so campaigns fill them by it.
+ */
+export function templateVariables(body: string): string[] {
+  const found = [...body.matchAll(/\{([a-z0-9_]+)\}/gi)].map((match) => match[1]);
+
+  return [...new Set(found)];
+}
 
 export type TemplateCheck =
   | { ok: true; value: CheckedTemplate }
@@ -157,6 +170,7 @@ export function checkTemplate(
       metaLanguage: metaLanguage || null,
       approval,
       category: input.category?.trim() || null,
+      variables: templateVariables(body),
     },
   };
 }
@@ -174,6 +188,9 @@ export async function listTemplates(businessId: string) {
       metaName: true,
       metaLanguage: true,
       approval: true,
+      variables: true,
+      rejectionReason: true,
+      lastSyncedAt: true,
       updatedAt: true,
     },
   });
@@ -181,6 +198,7 @@ export async function listTemplates(businessId: string) {
   return rows.map((row) => ({
     ...row,
     updatedAt: row.updatedAt.toISOString(),
+    lastSyncedAt: row.lastSyncedAt?.toISOString() ?? null,
     // Sent down already worded, so no screen has to own a second copy of these
     // labels (docs/Rules.md §7).
     approvalLabel: APPROVAL_LABEL[row.approval] ?? row.approval,

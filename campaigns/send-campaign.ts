@@ -27,6 +27,7 @@ import "server-only";
 
 import { db } from "../lib/db.ts";
 import { linkConversationToContact } from "../lib/contacts.ts";
+import { segmentWhere, storedFilter } from "../lib/segments.ts";
 import { checkCampaignQuota, checkMessageQuota } from "../lib/usage.ts";
 import { capabilitiesFor } from "../whatsapp-connectors/capabilities.ts";
 import { connectorFor } from "../whatsapp-connectors/index.ts";
@@ -65,7 +66,38 @@ export type NewCampaign = {
   warningAcknowledged?: boolean;
   /** When to start. Null or past means now. */
   scheduledFor?: Date | null;
+  /**
+   * A saved segment to send to, on top of anyone picked or typed. Resolved
+   * into recipients now, when the campaign is written, so every check below
+   * (the cap, opt-outs, the plan's quota) sees the real list.
+   */
+  segmentId?: string | null;
+  /** With a segment: only contacts who have said yes, not merely not no. */
+  onlyOptedIn?: boolean;
+  /**
+   * Values typed on screen for the message's placeholders other than {name}
+   * ({offer} -> "20% off"), filled in before anything is checked or sent.
+   */
+  variableValues?: Record<string, string>;
 };
+
+/** Most contacts one segment broadcast may reach, whatever the tier allows. */
+const MAX_SEGMENT_RECIPIENTS = 10_000;
+
+/**
+ * Fills the campaign-wide placeholders. {name} is left for `personalise`,
+ * which fills it per person; blank values are left unfilled so the check
+ * below still catches them.
+ */
+export function fillCampaignVariables(body: string, values: Record<string, string> = {}): string {
+  return body.replace(/\{([a-z0-9_]+)\}/gi, (whole, key: string) => {
+    if (key.toLowerCase() === "name") return whole;
+
+    const value = values[key]?.trim();
+
+    return value ? value.slice(0, 500) : whole;
+  });
+}
 
 export type BuildResult =
   | {
@@ -102,7 +134,8 @@ type Recipient = {
  */
 export async function buildCampaign(input: NewCampaign): Promise<BuildResult> {
   const name = input.name.trim();
-  const body = input.body.trim();
+  const variableValues = cleanVariableValues(input.variableValues);
+  const body = fillCampaignVariables(input.body.trim(), variableValues);
 
   if (!name) return { ok: false, message: "Give this campaign a name.", field: "name" };
   if (!body) return { ok: false, message: "Write the message you want to send.", field: "body" };
@@ -231,12 +264,62 @@ export async function buildCampaign(input: NewCampaign): Promise<BuildResult> {
     });
   }
 
+  let segmentId: string | null = null;
+
+  if (input.segmentId) {
+    const segment = await db.segment.findFirst({
+      where: { id: input.segmentId, businessId: input.businessId },
+      select: { id: true, filter: true },
+    });
+    const filter = segment ? storedFilter(segment.filter) : null;
+
+    if (!segment || !filter) {
+      return { ok: false, message: "That segment no longer exists or can't be read.", field: "segment" };
+    }
+
+    segmentId = segment.id;
+
+    const members = await db.contact.findMany({
+      where: {
+        AND: [
+          segmentWhere(input.businessId, filter),
+          // Opted-out contacts would be dropped below anyway; leaving them out
+          // here keeps them from counting against the QR cap.
+          input.onlyOptedIn ? { optInStatus: "OPTED_IN" } : { optInStatus: { not: "OPTED_OUT" } },
+        ],
+      },
+      orderBy: { createdAt: "asc" },
+      take: MAX_SEGMENT_RECIPIENTS + 1,
+      select: { phone: true, name: true, conversations: { select: { id: true }, take: 1 } },
+    });
+
+    if (members.length > MAX_SEGMENT_RECIPIENTS) {
+      return {
+        ok: false,
+        message: `That segment has more than ${MAX_SEGMENT_RECIPIENTS.toLocaleString("en-IN")} contacts. Narrow it down and try again.`,
+        field: "segment",
+      };
+    }
+
+    for (const member of members) {
+      if (audience.has(member.phone)) continue;
+
+      audience.set(member.phone, {
+        conversationId: member.conversations[0]?.id ?? null,
+        contactPhone: member.phone,
+        contactName: member.name,
+      });
+    }
+  }
+
   const contacts = [...audience.values()];
 
   if (contacts.length === 0) {
     return {
       ok: false,
-      message: "Choose somebody to send this to, or add a phone number.",
+      message: input.segmentId
+        ? "Nobody in that segment can be sent to right now."
+        : "Choose somebody to send this to, or add a phone number.",
       field: "recipients",
     };
   }
@@ -371,6 +454,10 @@ export async function buildCampaign(input: NewCampaign): Promise<BuildResult> {
       throttleMs: spacing.gapMs,
       warningAcknowledgedAt: input.warningAcknowledged ? new Date() : null,
       scheduledFor: startAt,
+      segmentId,
+      audienceBuiltAt: segmentId ? new Date() : null,
+      onlyOptedIn: Boolean(segmentId && input.onlyOptedIn),
+      variableValues,
       recipients: {
         create: addressed.map((contact, index) => ({
           conversationId: contact.conversationId,
@@ -457,6 +544,8 @@ export async function sendDueMessages(limit = 25): Promise<SendTick> {
           metaTemplateName: true,
           metaTemplateLanguage: true,
           body: true,
+          variableValues: true,
+          template: { select: { variables: true } },
         },
       },
     },
@@ -494,6 +583,8 @@ async function sendOne(recipient: {
     metaTemplateName: string | null;
     metaTemplateLanguage: string | null;
     body: string;
+    variableValues: unknown;
+    template: { variables: string[] } | null;
   };
 }): Promise<"sent" | "failed" | "skipped"> {
   const claimed = await db.campaignRecipient.updateMany({
@@ -537,11 +628,7 @@ async function sendOne(recipient: {
         to: recipient.contactPhone,
         templateName: recipient.campaign.metaTemplateName,
         languageCode: recipient.campaign.metaTemplateLanguage ?? "en_US",
-        // The only value that varies per person. A template with no {name} in
-        // it takes no parameters at all.
-        parameters: recipient.campaign.body.includes("{name}")
-          ? [recipient.contactName?.trim() || "there"]
-          : [],
+        parameters: templateParameters(recipient.campaign, recipient.contactName),
       })
     : await connector.sendText({
         connectionId: connection.id,
@@ -595,6 +682,41 @@ async function sendOne(recipient: {
   });
 
   return "sent";
+}
+
+/**
+ * The values for an approved template's placeholders, in the order Meta
+ * numbers them. {name} varies per person; everything else was typed on screen
+ * when the campaign was written.
+ */
+function templateParameters(
+  campaign: { body: string; variableValues: unknown; template: { variables: string[] } | null },
+  contactName: string | null,
+): string[] {
+  const name = contactName?.trim() || "there";
+  const variables = campaign.template?.variables ?? [];
+
+  if (variables.length === 0) {
+    // A template saved before variables were recorded: {name} was the only
+    // placeholder it could have.
+    return campaign.body.includes("{name}") ? [name] : [];
+  }
+
+  const values = (campaign.variableValues ?? {}) as Record<string, string>;
+
+  return variables.map((variable) => (variable === "name" ? name : values[variable] ?? ""));
+}
+
+function cleanVariableValues(values: Record<string, string> | undefined): Record<string, string> {
+  const clean: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(values ?? {})) {
+    if (/^[a-z0-9_]{1,40}$/i.test(key) && typeof value === "string" && value.trim()) {
+      clean[key] = value.trim().slice(0, 500);
+    }
+  }
+
+  return clean;
 }
 
 async function markFailed(id: string, reason: string) {

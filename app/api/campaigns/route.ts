@@ -38,6 +38,9 @@ export async function POST(request: Request) {
       templateId?: unknown;
       warningAcknowledged?: unknown;
       scheduledFor?: unknown;
+      segmentId?: unknown;
+      onlyOptedIn?: unknown;
+      variableValues?: unknown;
     } | null;
 
     const conversationIds = Array.isArray(body?.conversationIds)
@@ -62,6 +65,12 @@ export async function POST(request: Request) {
       templateId: typeof body?.templateId === "string" ? body.templateId : null,
       warningAcknowledged: body?.warningAcknowledged === true,
       scheduledFor: when && !Number.isNaN(when.getTime()) ? when : null,
+      segmentId: typeof body?.segmentId === "string" && body.segmentId ? body.segmentId : null,
+      onlyOptedIn: body?.onlyOptedIn === true,
+      variableValues:
+        body?.variableValues && typeof body.variableValues === "object" && !Array.isArray(body.variableValues)
+          ? (body.variableValues as Record<string, string>)
+          : {},
     });
 
     if (!result.ok) {

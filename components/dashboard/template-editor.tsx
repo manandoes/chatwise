@@ -35,6 +35,8 @@ export type EditableTemplate = {
   metaLanguage: string | null;
   approval: string;
   approvalLabel: string;
+  /** Meta's own words, when it turned the template down. */
+  rejectionReason?: string | null;
 };
 
 const APPROVAL_CHOICES = [
@@ -177,6 +179,9 @@ export function TemplateEditor({
               <p className="whitespace-pre-wrap text-small leading-relaxed text-text-secondary">
                 {template.body}
               </p>
+              {needsMetaApproval && template.rejectionReason && (
+                <p className="text-xs text-error">Meta said: {template.rejectionReason}</p>
+              )}
             </li>
           ))}
         </ul>
