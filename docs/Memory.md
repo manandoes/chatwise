@@ -2159,6 +2159,53 @@ that is an argument rather than a look.
 
 ---
 
+## Session Update — 2026-09-27 (Google Sheets)
+
+- **Completed:** Google Sheets under Dashboard → Integrations: connect a Google
+  account (its own OAuth grant, refresh token encrypted), export contacts — all
+  or a segment — to a new or existing sheet now, daily or weekly (REPLACE or
+  APPEND), and import contacts with a preview, column mapping, logged batches
+  and Undo. `lib/oauth-state.ts` now serves Shopify and Google (it replaced
+  `integrations/shopify/oauth-state.ts`).
+- **Verified:** typecheck, lint; 35 checks of export/scheduled export/import/
+  rollback run through the real job runner against an in-memory fake of
+  Google's token and Sheets endpoints; 17 route checks through a signed-in
+  session (connect/callback state handling, the Shopify flow on the shared
+  helper, validation, owner-only, other businesses' ids refused).
+  **Not verified against real Google** — no Google test project was available.
+- **Also this session:** another Claude session (`chatwise-ed`) is building
+  the product-catalogue search in the Sales and Personal Shopper bots in the
+  same working tree; that piece is theirs. Each session commits only its own
+  files.
+
+### Decisions and assumptions (please confirm)
+
+- **Scope is `spreadsheets`, not `drive.file`.** Importing from a sheet the
+  owner already has needs access to sheets ChatWise didn't create; `drive.file`
+  would need Google's file picker embedded in the page. It is a sensitive scope,
+  so Google's OAuth verification is needed before any account outside the test
+  users can connect — a product-owner step in Google Cloud.
+- **The connection belongs to the business**, made by an owner, and is separate
+  from "Sign in with Google". Only owners can export or import: an export is
+  every contact's details leaving ChatWise.
+- **Values are written RAW**, so a contact named `=HYPERLINK(…)` stays text
+  rather than becoming a live formula in the owner's sheet.
+- **Scheduled exports** run from the 15-minute job; each claims its next slot
+  before running, so a failure waits for the next slot (shown on screen) rather
+  than retrying in a loop. Missed slots aren't back-filled. Disconnecting Google
+  pauses them. At most 10 per account; at most 50,000 rows per export.
+- **Imports** match on phone number and only fill blanks on existing contacts.
+  "No" in a consent column opts people out; "yes" opts in only people who
+  haven't been asked — never someone who said STOP. Numbers without a country
+  code need the country code chosen on screen. At most 20,000 rows; one import
+  at a time per account.
+- **Undo** removes the contacts an import created, except ones that have since
+  been messaged, ordered, paid, booked or given a deal — those stay, unlinked
+  from the batch. Details an import filled in on contacts that already existed,
+  tags and consent changes stay.
+
+---
+
 ## Session Update — [DATE]
 - Worked on:
 - Completed:

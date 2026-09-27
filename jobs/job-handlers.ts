@@ -21,6 +21,8 @@ import {
 } from "../integrations/shopify/connect.ts";
 import { processShopifyWebhook, sendAbandonedCartReminder } from "../integrations/shopify/sync.ts";
 import { applyPaymentEvent, readProviderEvent } from "../integrations/payments/links.ts";
+import { runDueExports, runImport } from "../integrations/google/sheets.ts";
+import { isFeatureEnabled } from "../lib/features.ts";
 import { db } from "../lib/db.ts";
 import { businessesToSync, syncTemplatesFromMeta } from "../campaigns/templates/meta-sync.ts";
 
@@ -196,6 +198,38 @@ const evaluateAllRulesHandler: JobHandler = {
   },
 };
 
+// ─── Google Sheets ───────────────────────────────────────────────────────────
+
+/**
+ * Every fifteen minutes: whichever scheduled exports are due. Each claims its
+ * next slot before running, so this is safe to repeat.
+ */
+const scheduledExportsHandler: JobHandler = {
+  safeToRepeat: true,
+  async run() {
+    if (!isFeatureEnabled("googleSheets")) return { status: "done", note: "Google Sheets is switched off." };
+
+    const { ran, failed } = await runDueExports();
+
+    return { status: "done", note: `${ran} exported, ${failed} failed` };
+  },
+};
+
+/**
+ * One import batch. Every write is an upsert on the phone number, so a
+ * re-run after an interruption changes nothing that was already imported.
+ */
+const sheetsImportHandler: JobHandler = {
+  safeToRepeat: true,
+  async run(job) {
+    if (!job.businessId) return { status: "failed", error: "No business on this job." };
+
+    const result = await runImport(job.businessId, job.payload);
+
+    return result.status === "retry" ? { status: "retry", error: result.note } : { status: "done", note: result.note };
+  },
+};
+
 /** Every six hours: each Business API account's template statuses from Meta. */
 const syncAllTemplatesHandler: JobHandler = {
   safeToRepeat: true,
@@ -225,5 +259,7 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   "tags.evaluate_rules": evaluateRulesHandler,
   "tags.evaluate_all_rules": evaluateAllRulesHandler,
   "templates.sync_all": syncAllTemplatesHandler,
+  "sheets.scheduled_exports": scheduledExportsHandler,
+  "sheets.import": sheetsImportHandler,
 };
 

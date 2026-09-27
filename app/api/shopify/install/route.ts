@@ -13,7 +13,7 @@ import { getApiUser } from "@/lib/auth";
 import { isFeatureEnabled, publicAppUrl } from "@/lib/features";
 import { findMembership } from "@/lib/team";
 import { authorizeUrl, isShopifyConfigured, normalizeShopDomain } from "@/integrations/shopify/client";
-import { beginShopifyOAuth } from "@/integrations/shopify/oauth-state";
+import { beginOAuth, SHOPIFY_OAUTH } from "@/lib/oauth-state";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +42,7 @@ export async function GET(request: Request) {
     if (!membership) return NextResponse.redirect(`${publicAppUrl()}/onboarding`);
     if (membership.role !== "OWNER") return backToIntegrations("owner-only");
 
-    const state = await beginShopifyOAuth(shop);
+    const state = await beginOAuth(SHOPIFY_OAUTH, shop);
 
     return NextResponse.redirect(authorizeUrl(shop, state, `${publicAppUrl()}/api/shopify/callback`));
   } catch (error) {

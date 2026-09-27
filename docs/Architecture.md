@@ -269,6 +269,7 @@ Designed so a non-technical person can open the file tree and understand what's 
 │   ├── automations.ts                  #   Every automated WhatsApp message goes out through here
 │   ├── jobs.ts                         #   Putting background work on the queue
 │   ├── features.ts                     #   Which integrations are switched on; the public app URL
+│   ├── oauth-state.ts                  #   The cookie tying an OAuth redirect to the browser that began it
 │   ├── generated/prisma/               #   Generated Prisma Client — git-ignored, rebuilt by
 │   │                                   #   `prisma generate`. Never edit by hand.
 │   └── validation/                     #   Form/schema validation
@@ -284,6 +285,11 @@ Designed so a non-technical person can open the file tree and understand what's 
 │
 ├── integrations/                       # Outside services other than WhatsApp. One folder per
 │   │                                   #   service; nothing else calls that service directly
+│   ├── google/                         #   A Google account connected for Sheets (separate from
+│   │   │                               #     "Sign in with Google"; Calendar could join later)
+│   │   ├── client.ts                   #     OAuth, token refresh, and the Sheets API calls
+│   │   └── sheets.ts                   #     Contact export (now / daily / weekly), import with
+│   │                                   #     preview + column mapping, logged batches, undo
 │   ├── payments/                       #   The BUSINESS's own Razorpay/Stripe, for payment links
 │   │   ├── razorpay.ts                 #     Links + webhook signature (not lib/razorpay.ts,
 │   │   │                               #     which is ChatWise's own billing)
@@ -292,7 +298,6 @@ Designed so a non-technical person can open the file tree and understand what's 
 │   │   └── links.ts                    #     Create, resend, and move a payment forward from events
 │   └── shopify/
 │       ├── client.ts                   #     OAuth + webhook signature checks, the paced Admin API
-│       ├── oauth-state.ts              #     The cookie that ties Shopify's redirect to this browser
 │       ├── connect.ts                  #     Connect / disconnect, webhook registration, the
 │       │                               #     history import, and Shopify's privacy requests
 │       └── sync.ts                     #     What each webhook does: orders, checkouts (abandoned

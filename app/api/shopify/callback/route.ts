@@ -3,7 +3,7 @@
 // Four checks before anything is stored, each of which alone refuses:
 //   1. Shopify's signature on the address (`hmac`) is valid for our app secret.
 //   2. The `state` matches the cookie this browser was given on the way out,
-//      for the same store (integrations/shopify/oauth-state.ts).
+//      for the same store (lib/oauth-state.ts).
 //   3. The person is still signed in and owns the business.
 //   4. The store isn't already connected to a different ChatWise account.
 //
@@ -22,7 +22,7 @@ import {
   verifyOAuthQuery,
 } from "@/integrations/shopify/client";
 import { saveConnectedShop } from "@/integrations/shopify/connect";
-import { finishShopifyOAuth } from "@/integrations/shopify/oauth-state";
+import { finishOAuth, SHOPIFY_OAUTH } from "@/lib/oauth-state";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +38,7 @@ export async function GET(request: Request) {
     const shop = normalizeShopDomain(query.get("shop"));
 
     if (!shop || !verifyOAuthQuery(query)) return backToIntegrations("bad-signature");
-    if (!(await finishShopifyOAuth(query.get("state"), shop))) return backToIntegrations("expired");
+    if (!(await finishOAuth(SHOPIFY_OAUTH, query.get("state"), shop))) return backToIntegrations("expired");
 
     const user = await getApiUser();
     const membership = user ? await findMembership(user.id) : null;

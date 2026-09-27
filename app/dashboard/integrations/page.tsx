@@ -9,6 +9,7 @@ import type { Metadata } from "next";
 
 import { AutomationsEditor } from "@/components/dashboard/automations-editor";
 import { EmptyState, Pill, Section } from "@/components/dashboard/form-bits";
+import { GoogleSheetsPanel } from "@/components/dashboard/google-sheets-panel";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { PaymentAccountsPanel } from "@/components/dashboard/payment-accounts-panel";
 import { ShopifyPanel } from "@/components/dashboard/shopify-panel";
@@ -19,6 +20,7 @@ import { formatWhen } from "@/lib/format-when";
 import { describeJobType, listFailedJobs } from "@/lib/jobs";
 import { requirePageContext } from "@/lib/page-context";
 import { isShopifyConfigured } from "@/integrations/shopify/client";
+import { isGoogleConfigured, spreadsheetUrl } from "@/integrations/google/client";
 import { listPaymentAccounts } from "@/integrations/payments/links";
 
 export const metadata: Metadata = { title: "Integrations" };
@@ -51,6 +53,21 @@ const SHOPIFY_RESULTS: Record<string, { tone: "good" | "bad"; text: string }> = 
   error: { tone: "bad", text: "Something went wrong connecting to Shopify. Please try again." },
 };
 
+/** What the ?google= result from connecting Google Sheets means. */
+const GOOGLE_RESULTS: Record<string, { tone: "good" | "bad"; text: string }> = {
+  connected: { tone: "good", text: "Google Sheets is connected." },
+  off: { tone: "bad", text: "Google Sheets isn't switched on for this ChatWise installation yet." },
+  cancelled: { tone: "bad", text: "Nothing was connected — Google's screen was cancelled." },
+  expired: { tone: "bad", text: "That attempt expired or was started in another browser. Please try again." },
+  "owner-only": { tone: "bad", text: "Only the account owner can connect Google Sheets." },
+  "no-refresh": {
+    tone: "bad",
+    text: "Google didn't give us lasting access. Remove ChatWise under your Google account's third-party access, then connect again.",
+  },
+  "no-scope": { tone: "bad", text: "Spreadsheet access wasn't allowed on Google's screen, so nothing was connected." },
+  error: { tone: "bad", text: "Something went wrong connecting Google. Please try again." },
+};
+
 const COMPLIANCE_WORDS: Record<string, string> = {
   "customers/data_request": "A customer asked for their data",
   "customers/redact": "A customer asked to be erased",
@@ -79,6 +96,7 @@ export default async function IntegrationsPage({
   const shopifyResult =
     typeof params.shopify === "string" ? SHOPIFY_RESULTS[params.shopify] : undefined;
   const prefillShop = typeof params.shop === "string" ? params.shop : "";
+  const googleResult = typeof params.google === "string" ? GOOGLE_RESULTS[params.google] : undefined;
 
   const [shop, automations, templates, failedJobs, compliance, connection, paymentAccounts] = await Promise.all([
     db.shop.findUnique({
@@ -111,6 +129,46 @@ export default async function IntegrationsPage({
       select: { type: true },
     }),
     listPaymentAccounts(business.id),
+  ]);
+
+  const [google, segments, scheduledExports, importBatches] = await Promise.all([
+    db.googleConnection.findUnique({
+      where: { businessId: business.id },
+      select: { googleEmail: true, createdAt: true },
+    }),
+    db.segment.findMany({ where: { businessId: business.id }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+    db.scheduledExport.findMany({
+      where: { businessId: business.id },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        spreadsheetId: true,
+        sheetName: true,
+        frequency: true,
+        mode: true,
+        enabled: true,
+        nextRunAt: true,
+        lastRunAt: true,
+        lastError: true,
+        segment: { select: { name: true } },
+      },
+    }),
+    db.importBatch.findMany({
+      where: { businessId: business.id },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      select: {
+        id: true,
+        createdAt: true,
+        sourceRef: true,
+        status: true,
+        rowCount: true,
+        createdCount: true,
+        updatedCount: true,
+        errorCount: true,
+        errors: true,
+      },
+    }),
   ]);
 
   return (
@@ -150,6 +208,43 @@ export default async function IntegrationsPage({
           description="Connect your own Razorpay or Stripe account to send customers payment links on WhatsApp. The money goes straight to your account; ChatWise never sees card details."
         >
           <PaymentAccountsPanel available={isFeatureEnabled("paymentLinks")} accounts={paymentAccounts} />
+        </Section>
+      </div>
+
+      <div id="sheets">
+        <Section
+          title="Google Sheets"
+          description="Export your contacts to a spreadsheet, on demand or on a schedule, and import contacts from one."
+        >
+          <GoogleSheetsPanel
+            available={isFeatureEnabled("googleSheets") && isGoogleConfigured()}
+            result={googleResult ?? null}
+            connection={google ? { email: google.googleEmail, connectedWhen: formatWhen(google.createdAt) } : null}
+            segments={segments}
+            scheduled={scheduledExports.map((row) => ({
+              id: row.id,
+              url: spreadsheetUrl(row.spreadsheetId),
+              sheetName: row.sheetName,
+              segmentName: row.segment?.name ?? null,
+              frequency: row.frequency,
+              mode: row.mode,
+              enabled: row.enabled,
+              nextRun: row.nextRunAt.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }),
+              lastRun: row.lastRunAt ? formatWhen(row.lastRunAt) : null,
+              lastError: row.lastError,
+            }))}
+            imports={importBatches.map((batch) => ({
+              id: batch.id,
+              when: formatWhen(batch.createdAt),
+              source: batch.sourceRef ?? "",
+              status: batch.status,
+              rowCount: batch.rowCount,
+              createdCount: batch.createdCount,
+              updatedCount: batch.updatedCount,
+              errorCount: batch.errorCount,
+              errors: Array.isArray(batch.errors) ? (batch.errors as { row: number; reason: string }[]) : [],
+            }))}
+          />
         </Section>
       </div>
 
