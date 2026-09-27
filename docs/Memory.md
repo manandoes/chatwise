@@ -2206,6 +2206,47 @@ that is an argument rather than a look.
 
 ---
 
+## Session Update — 2026-09-27 (Calendly bookings)
+
+- **Completed:** Calendly under Dashboard → Integrations. The booking link alone
+  lets anyone on the team send it (Bookings → "Send your booking link", tagged
+  with the contact's id). Adding a personal access token registers a Calendly
+  webhook (`invitee.created` / `invitee.canceled`, signed with a key we
+  generate), so bookings appear on the new Bookings page, each gets a WhatsApp
+  confirmation (`BOOKING_CONFIRMED`), and reminders go 24 hours and 1 hour
+  before (`BOOKING_REMINDER`, the 5-minute `bookings.reminders` job).
+  `bookingLinkFor` moved from `integrations/shopify/sync.ts` to
+  `integrations/calendly/sync.ts`, next to the code that reads its tag back.
+- **Verified:** typecheck, lint; 32 checks — a fake Calendly API in process
+  (token check, webhook registration, reconnect replacing the old webhook, the
+  free-plan fallback), signed webhooks through `next dev` (bad signature,
+  replay, dedupe, matching, cancellation) and reminder timing through the job
+  code — plus 7 route/page checks through a signed-in session.
+  **Not verified against real Calendly.**
+
+### Decisions and assumptions (please confirm)
+
+- **A personal access token, not a Calendly OAuth app.** It is one paste for the
+  owner and needs no ChatWise developer app registered with Calendly. Calendly
+  only offers webhooks on its paid plans; a free account still connects, as
+  "links only" (the screen says so).
+- **Who booked** is decided by, in order: the contact id in our own link (only
+  if it belongs to this business), a phone number from Calendly's SMS field or
+  a question that asks for a phone/WhatsApp number, then an email we already
+  have. Calendly doesn't ask for a phone number by default, so owners should add
+  a "WhatsApp number" question to their event type; a booking with no number
+  is kept but gets no messages.
+- **Reminders:** the day-before one only if the meeting was booked at least
+  about 24 hours ahead; the hour-before one only if booked at least 2 hours
+  ahead. A reminder whose moment has passed (the host was down) is skipped, not
+  sent late. Cancelled bookings get none; disconnecting Calendly stops them.
+  Times are written in the business's own time zone (`Business.timezone`).
+- **A cancellation sends nothing** — the customer did it themselves.
+- **Google Calendar's slot-picker was skipped**, as decided; a Calendar scope
+  would be added where the Sheets one is (`integrations/google/client.ts`).
+
+---
+
 ## Session Update — [DATE]
 - Worked on:
 - Completed:

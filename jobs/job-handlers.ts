@@ -22,6 +22,7 @@ import {
 import { processShopifyWebhook, sendAbandonedCartReminder } from "../integrations/shopify/sync.ts";
 import { applyPaymentEvent, readProviderEvent } from "../integrations/payments/links.ts";
 import { runDueExports, runImport } from "../integrations/google/sheets.ts";
+import { processCalendlyWebhook, sendDueBookingReminders } from "../integrations/calendly/sync.ts";
 import { isFeatureEnabled } from "../lib/features.ts";
 import { db } from "../lib/db.ts";
 import { businessesToSync, syncTemplatesFromMeta } from "../campaigns/templates/meta-sync.ts";
@@ -230,6 +231,30 @@ const sheetsImportHandler: JobHandler = {
   },
 };
 
+// ─── Calendly ────────────────────────────────────────────────────────────────
+
+/** One booking or cancellation. Payload: { body }. An upsert, so safe to repeat. */
+const calendlyWebhookHandler: JobHandler = {
+  safeToRepeat: true,
+  async run(job) {
+    if (!job.businessId) return { status: "failed", error: "No business on this job." };
+
+    return { status: "done", note: await processCalendlyWebhook(job.businessId, job.payload.body) };
+  },
+};
+
+/** Every five minutes. Each reminder is claimed on its booking before it's queued. */
+const bookingRemindersHandler: JobHandler = {
+  safeToRepeat: true,
+  async run() {
+    if (!isFeatureEnabled("calendly")) return { status: "done", note: "Calendly is switched off." };
+
+    const { queued } = await sendDueBookingReminders();
+
+    return { status: "done", note: `${queued} reminders queued` };
+  },
+};
+
 /** Every six hours: each Business API account's template statuses from Meta. */
 const syncAllTemplatesHandler: JobHandler = {
   safeToRepeat: true,
@@ -261,5 +286,7 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   "templates.sync_all": syncAllTemplatesHandler,
   "sheets.scheduled_exports": scheduledExportsHandler,
   "sheets.import": sheetsImportHandler,
+  "calendly.webhook": calendlyWebhookHandler,
+  "bookings.reminders": bookingRemindersHandler,
 };
 

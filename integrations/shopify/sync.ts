@@ -29,6 +29,7 @@ import { cancelJobByKey, enqueueJob } from "../../lib/jobs.ts";
 import { formatMoney, readAutomation } from "../../lib/automations.ts";
 import { evaluateRulesForContact } from "../../lib/tag-rules.ts";
 import { upsertShopifyProduct, removeShopifyProduct } from "../../lib/catalog.ts";
+import { bookingLinkFor } from "../calendly/sync.ts";
 
 export type ShopRow = {
   id: string;
@@ -386,23 +387,6 @@ async function handleOrder(
   }
 
   return `order saved; ${message} queued`;
-}
-
-/**
- * The Calendly link with the contact's id in it, so the booking that comes
- * back can be matched to the right person even if they type a different
- * phone number (integrations/calendly/sync.ts).
- */
-export function bookingLinkFor(bookingUrl: string, contactId: string): string {
-  try {
-    const url = new URL(bookingUrl);
-    url.searchParams.set("utm_source", "chatwise");
-    url.searchParams.set("utm_content", contactId);
-
-    return url.toString();
-  } catch {
-    return bookingUrl;
-  }
 }
 
 // ─── Checkouts → abandoned-cart reminders ───────────────────────────────────

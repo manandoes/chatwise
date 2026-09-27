@@ -8,6 +8,7 @@
 import type { Metadata } from "next";
 
 import { AutomationsEditor } from "@/components/dashboard/automations-editor";
+import { CalendlyPanel } from "@/components/dashboard/calendly-panel";
 import { EmptyState, Pill, Section } from "@/components/dashboard/form-bits";
 import { GoogleSheetsPanel } from "@/components/dashboard/google-sheets-panel";
 import { PageHeader } from "@/components/dashboard/page-header";
@@ -131,7 +132,7 @@ export default async function IntegrationsPage({
     listPaymentAccounts(business.id),
   ]);
 
-  const [google, segments, scheduledExports, importBatches] = await Promise.all([
+  const [google, segments, scheduledExports, importBatches, calendly] = await Promise.all([
     db.googleConnection.findUnique({
       where: { businessId: business.id },
       select: { googleEmail: true, createdAt: true },
@@ -168,6 +169,10 @@ export default async function IntegrationsPage({
         errorCount: true,
         errors: true,
       },
+    }),
+    db.calendlyConnection.findUnique({
+      where: { businessId: business.id },
+      select: { bookingUrl: true, webhookUri: true },
     }),
   ]);
 
@@ -244,6 +249,18 @@ export default async function IntegrationsPage({
               errorCount: batch.errorCount,
               errors: Array.isArray(batch.errors) ? (batch.errors as { row: number; reason: string }[]) : [],
             }))}
+          />
+        </Section>
+      </div>
+
+      <div id="calendly">
+        <Section
+          title="Calendly"
+          description="Send customers your booking link on WhatsApp, and have bookings confirmed and reminded for you."
+        >
+          <CalendlyPanel
+            available={isFeatureEnabled("calendly")}
+            connection={calendly ? { bookingUrl: calendly.bookingUrl, webhooks: Boolean(calendly.webhookUri) } : null}
           />
         </Section>
       </div>

@@ -128,6 +128,7 @@ Designed so a non-technical person can open the file tree and understand what's 
 │   │   ├── contacts/                   #   The CRM contact list, and one contact's page
 │   │   ├── segments/page.tsx           #   Saved filters + auto-tag rules
 │   │   ├── deals/page.tsx              #   Pipeline board (drag, or the stage menu)
+│   │   ├── bookings/page.tsx           #   Calendly bookings, and sending the booking link
 │   │   ├── payments/page.tsx           #   Sending payment links; what became of them
 │   │   ├── integrations/page.tsx       #   Shopify, payment accounts, automated messages,
 │   │   │                               #     failed jobs, privacy requests (owner only)
@@ -285,6 +286,10 @@ Designed so a non-technical person can open the file tree and understand what's 
 │
 ├── integrations/                       # Outside services other than WhatsApp. One folder per
 │   │                                   #   service; nothing else calls that service directly
+│   ├── calendly/                       #   Calendly: booking links, bookings from its webhook,
+│   │   │                               #     the confirmation and 24h / 1h reminders
+│   │   ├── client.ts                   #     Token check, webhook registration, signature check
+│   │   └── sync.ts                     #     Connecting, matching a booking to a contact, reminders
 │   ├── google/                         #   A Google account connected for Sheets (separate from
 │   │   │                               #     "Sign in with Google"; Calendar could join later)
 │   │   ├── client.ts                   #     OAuth, token refresh, and the Sheets API calls
