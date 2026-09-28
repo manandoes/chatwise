@@ -1,16 +1,18 @@
 // How the Sales agent decides what to reply.
 //
-// Thin on purpose (docs/Rules.md §2). Everything that makes this agent safe to
-// let near a price list is in its prompt.
+// Thin on purpose (docs/Rules.md §2): it looks up which of the store's
+// products this conversation is about, then asks. Everything that makes this
+// agent safe to let near a price list is in its prompt.
 
 import type { BotHandler } from "../shared/handler-types.ts";
+import { productsForConversation } from "../shared/catalogue.ts";
 import { askAgent } from "../shared/run-agent.ts";
 import { salesSystemPrompt } from "./prompt.ts";
 
-export const salesHandler: BotHandler = (request) =>
+export const salesHandler: BotHandler = async (request) =>
   askAgent({
-    system: salesSystemPrompt(request),
+    system: salesSystemPrompt(request, await productsForConversation(request)),
     request,
     handoffReason:
-      "A sales question the agent could not answer from the price list — someone is asking about a price, a discount or a deal that was not set out.",
+      "A sale needs a person — a price, product or discount the agent wasn't given, a bulk or custom order, or a buyer ready to order with no link to send them to.",
   });

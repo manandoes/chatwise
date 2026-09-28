@@ -286,6 +286,7 @@ async function route(
   // The thread as an agent sees it. Built on demand, because it costs two more
   // queries and there are messages that never reach an agent at all.
   const buildRequest = async (): Promise<BotRequest> => ({
+    businessId: business.id,
     business: {
       name: business.name,
       industry: business.industry,

@@ -18,7 +18,7 @@ export const personalShopperBotConfigSchema: BotConfigSchema = {
     {
       "id": "catalogue",
       "label": "What's in your range?",
-      "hint": "Categories and rough price bands are enough to start.",
+      "hint": "Categories and rough price bands are enough to start. If your Shopify store is connected, it can also suggest real products from there, with live prices.",
       "type": "textarea",
       "placeholder": "Silver jewellery ₹1,500–₹8,000\nLeather bags ₹4,000–₹20,000",
       "required": true
@@ -33,6 +33,7 @@ export const personalShopperBotConfigSchema: BotConfigSchema = {
     {
       "id": "checkoutLink",
       "label": "Where should it send people to buy?",
+      "hint": "For anything without its own product page. Leave blank if you'd rather it handed over to you.",
       "type": "text",
       "placeholder": "https://yourshop.com"
     },

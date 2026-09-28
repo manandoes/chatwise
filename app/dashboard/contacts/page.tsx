@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { OPT_IN_STATUS_LABEL } from "@/lib/consent";
 import { listContactsPage } from "@/lib/contacts";
 import { db } from "@/lib/db";
-import { formatMoney } from "@/lib/automations";
+import { formatMoney } from "@/lib/format-money";
 import { formatWhen } from "@/lib/format-when";
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { requirePageContext } from "@/lib/page-context";

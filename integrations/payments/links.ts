@@ -28,7 +28,7 @@ import { db } from "../../lib/db.ts";
 import { decryptText, encryptText } from "../../lib/encryption.ts";
 import { enqueueJob } from "../../lib/jobs.ts";
 import { publicAppUrl } from "../../lib/features.ts";
-import { formatMoney } from "../../lib/automations.ts";
+import { formatMoney } from "../../lib/format-money.ts";
 import { refreshContactTotals } from "../../lib/contacts.ts";
 import { evaluateRulesForContact } from "../../lib/tag-rules.ts";
 import { createRazorpayLink, readRazorpayEvent, verifyRazorpayKeys } from "./razorpay.ts";

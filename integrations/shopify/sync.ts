@@ -26,7 +26,8 @@ import {
 import { setConsent } from "../../lib/consent.ts";
 import { callingCodeFor } from "../../lib/country-codes.ts";
 import { cancelJobByKey, enqueueJob } from "../../lib/jobs.ts";
-import { formatMoney, readAutomation } from "../../lib/automations.ts";
+import { readAutomation } from "../../lib/automations.ts";
+import { formatMoney } from "../../lib/format-money.ts";
 import { evaluateRulesForContact } from "../../lib/tag-rules.ts";
 import { upsertShopifyProduct, removeShopifyProduct } from "../../lib/catalog.ts";
 import { bookingLinkFor } from "../calendly/sync.ts";

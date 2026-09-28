@@ -30,7 +30,7 @@ All of them are built (Phase 7 for the Receptionist, Phase 8 for the rest).
 | `receptionist-bot/` | Answers the everyday questions from the knowledge base |
 | `lead-qualifier-bot/` | Finds out whether a new enquiry is worth following up |
 | `appointment-bot/` | Takes down what someone wants to book |
-| `sales-bot/` | Answers pricing questions and points people at checkout |
+| `sales-bot/` | Takes a buyer from first question to checkout: needs, recommendation, price, doubts, the link to buy |
 | `support-bot/` | Picks up order problems and raises what it cannot fix |
 | `follow-up-bot/` | Chases a quote that went quiet |
 | `personal-shopper-bot/` | Turns a vague brief into real suggestions |
@@ -39,13 +39,21 @@ All of them are built (Phase 7 for the Receptionist, Phase 8 for the rest).
 
 ## Two things worth knowing before you read one
 
-**No agent has an integration yet.** docs/PRD.md §5 gives several of them a
-calendar, a catalogue, an orders system or a checkout, and none of those exist
-in ChatWise today. So every agent works from two things only: the answers the
-owner gave during setup, and the knowledge base. Where an agent would need a
-system it does not have — to see whether 4pm is free, to look an order up — its
+**Most agents have no integration yet.** docs/PRD.md §5 gives several of them a
+calendar, a catalogue, an orders system or a checkout. So far only the
+catalogue is wired in: Sales and Personal Shopper are handed the store's
+products that match the conversation, with live prices and stock
+(`shared/catalogue.ts`, when catalogue search is switched on and a store is
+connected). Everything else works from two things only: the answers the owner
+gave during setup, and the knowledge base. Where an agent would need a system
+it does not have — to see whether 4pm is free, to look an order up — its
 prompt says so plainly and it hands the conversation to a person. An agent that
 believes it has a calendar will happily double-book a salon.
+
+**None of them is fine-tuned.** An agent's "training" is its `prompt.ts` plus
+that business's own details, rebuilt on every message. That is deliberate:
+prices, stock and policies change, and a model that had learned last month's
+would quote them with confidence.
 
 **Two of them sometimes speak first.** The Follow-up and Feedback agents are
 triggered by time rather than by a message, so their handlers export a second

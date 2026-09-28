@@ -184,6 +184,8 @@ Designed so a non-technical person can open the file tree and understand what's 
 │       ├── handler-types.ts            #     What an agent is given, and what it may answer
 │       ├── prompt-shared.ts            #     The rules every agent follows, written once
 │       ├── run-agent.ts                #     Ask the model; cope when it cannot answer
+│       ├── catalogue.ts                #     The store's products a conversation is about —
+│       │                               #     Sales and Personal Shopper only (PRD §5)
 │       ├── handlers.ts                 #     Which agent handles which bot type
 │       └── bot-catalog.ts              #     The list of selectable agents — the single source of truth
 │                                       #     read by the setup picker, the API and the dashboard
@@ -252,6 +254,7 @@ Designed so a non-technical person can open the file tree and understand what's 
 │   ├── analytics.ts                    #   The numbers on Overview and Analytics,
 │   │                                   #   counted from real Conversation/Message/Lead rows
 │   ├── format-when.ts                  #   "Yesterday", "2:14 pm", "4 minutes" — times
+│   ├── format-money.ts                 #   "₹1,499.00" — money, the same everywhere
 │   │                                   #   and durations as people say them
 │   ├── plans.ts                        #   The two paid plans as data — prices, limits and what
 │   │                                   #   each includes. THE file to edit when a plan

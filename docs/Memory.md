@@ -2206,6 +2206,67 @@ that is an argument rather than a look.
 
 ---
 
+## Session Update — 2026-09-27 (Sales agent: end to end, on the live catalogue)
+
+- **Asked for:** the product owner wants the WhatsApp agent to work as an
+  end-to-end salesperson, and asked how many agents one WhatsApp account can
+  run. (Answer: exactly one of the nine, plus the CRM agent in the background —
+  PRD §3.1, enforced by the unique `AgentInstance.businessId`.)
+- **Completed:**
+  - **Sales agent rewritten as a whole sale**, not a price list: find out the
+    need (one question at a time), recommend at most three with exact prices,
+    answer objections once, ask for the sale once, close with the link to buy,
+    one add-on after they've decided, and what to say after the link. Two new
+    optional setup questions: `whatToAsk` and `addOns`.
+  - **Sales and Personal Shopper read the live catalogue.**
+    `bots/shared/catalogue.ts` searches the store's products by meaning
+    (`searchProducts`, which nothing called until now) using the last three
+    turns plus the new message, and the top five go into the prompt with live
+    price, stock and product link (`describeCatalogue`). Closing prefers the
+    product's own link, then the owner's checkout link, then a person
+    (`describeHowToBuy`). `BotRequest` gained `businessId` for this.
+  - **Fixed:** the shared ground rules told every agent to hand over when "the
+    question is about money" — so the two agents whose job is prices handed
+    over on price questions. They now pass `quotesPrices` and hand over only
+    for refunds, payment problems, complaints and anything sensitive.
+  - `formatMoney` moved from `lib/automations.ts` to the new, import-free
+    `lib/format-money.ts`, so a prompt can use it without loading the database
+    and the WhatsApp connectors.
+- **Verified:** typecheck, lint. Scripted conversations against the live model
+  (fixture businesses, no database): 6 of 19 scenarios got an answer and all 6
+  behaved — greeting with a one-line intro, exact prices with no handover
+  (catalogue product, typed SaaS plan, Personal Shopper), a prompt injection
+  handed over, "just looking" accepted in one line. The other 13 (objection,
+  discount, close with the product link, sold out, bulk, Hindi, after payment,
+  the shopper's gift brief) were never answered: Gemini returned 503 and then
+  429 on every call. The script is worth re-running once the key has quota.
+  **Not verified:** a real catalogue search end to end (pgvector + embeddings +
+  the router) — `FEATURE_CATALOG_SEARCH` is off here and the `crm_integrations`
+  migration isn't applied to Supabase yet.
+
+### Decisions and assumptions (please confirm)
+
+- **Closing is by link, not by the agent creating payment links** (product
+  owner, 2026-09-27). A store product gets its own product page, where the
+  store takes the payment, keeps stock right and the order flows back into
+  Contacts. The agent never creates a Razorpay/Stripe link itself.
+- **No fine-tuning.** An agent's "training" is its prompt plus the business's
+  own setup answers, knowledge base and live catalogue, rebuilt per message.
+  Prices change daily; a fine-tuned model would quote stale ones.
+- **Shopify products are stored without a currency** (`productFromShopify`
+  never sets one; Shopify sends none per product). The agent is shown the bare
+  number and told to add a symbol only when the owner's own details make the
+  currency plain. The proper fix is to record the shop's currency (Shopify's
+  `shop.json`) when a store connects — a new column on `Shop`, so not done
+  here.
+- **Stock counts are never shown to the agent**, only "Available" / "Sold
+  out", so it can't invent scarcity from a number.
+- **A failed catalogue search never costs a reply**: any error is logged by
+  kind only (never the customer's words) and the agent answers from the typed
+  list.
+
+---
+
 ## Session Update — 2026-09-27 (Calendly bookings)
 
 - **Completed:** Calendly under Dashboard → Integrations. The booking link alone

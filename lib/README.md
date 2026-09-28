@@ -17,6 +17,8 @@ those carry no secrets and import nothing that does.
 - `redis.ts` — the Redis connection, and "is it actually reachable?"
 - `password.ts` — password hashing and checking, using Node's built-in `scrypt`
 - `format-when.ts` — "Yesterday", "2:14 pm", "4 minutes", "4 October 2026"
+- `format-money.ts` — "₹1,499.00", "$20.00", written the same on screens, in
+  automated messages and in the agents' own instructions
 
 ## Who is signed in, and what they may do
 

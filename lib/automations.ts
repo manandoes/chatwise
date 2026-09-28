@@ -325,14 +325,3 @@ async function inServiceWindow(conversationId: string): Promise<boolean> {
 
   return Boolean(last && Date.now() - last.createdAt.getTime() < SERVICE_WINDOW_MS);
 }
-
-/** A money amount for a message: "₹1,499.00", "$20.00". */
-export function formatMoney(amount: number | string, currency: string): string {
-  const value = typeof amount === "string" ? Number(amount) : amount;
-
-  try {
-    return new Intl.NumberFormat("en-IN", { style: "currency", currency }).format(value);
-  } catch {
-    return `${currency} ${value.toFixed(2)}`;
-  }
-}

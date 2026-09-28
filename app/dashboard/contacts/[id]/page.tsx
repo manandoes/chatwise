@@ -10,7 +10,7 @@ import { notFound } from "next/navigation";
 import { ContactEditor } from "@/components/dashboard/contact-editor";
 import { Pill, Section } from "@/components/dashboard/form-bits";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { formatMoney } from "@/lib/automations";
+import { formatMoney } from "@/lib/format-money";
 import { OPT_IN_STATUS_LABEL, readConsentLog } from "@/lib/consent";
 import { db } from "@/lib/db";
 import { STAGE_LABEL } from "@/lib/deals";

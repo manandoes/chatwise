@@ -44,6 +44,15 @@ export type ConversationTurn = {
 };
 
 export type BotRequest = {
+  /**
+   * Which account this conversation belongs to, for the lookups an agent is
+   * allowed to make — the live product catalogue, for the two agents whose row
+   * in docs/PRD.md §5 lists it (bots/shared/catalogue.ts).
+   *
+   * Like `apiKey` below it is plumbing, not part of `business`: nothing a
+   * prompt should ever read or repeat.
+   */
+  businessId: string;
   business: BusinessProfile;
   agent: AgentSettings;
   knowledge: KnowledgeItem[];

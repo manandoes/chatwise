@@ -19,7 +19,7 @@ const AGENTS = [
   },
   {
     name: "Sales",
-    trigger: "Fields pricing and plan questions, and sends a checkout link.",
+    trigger: "Takes a buyer from first question to checkout: recommends, answers price and doubts, sends the link to buy.",
   },
   {
     name: "Support",
