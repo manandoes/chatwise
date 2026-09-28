@@ -21,6 +21,7 @@
 import "server-only";
 
 import { db } from "@/lib/db";
+import { Prisma } from "@/lib/generated/prisma/client";
 
 /** How far back a screen is looking. */
 export const PERIODS = ["7d", "30d", "all"] as const;
@@ -263,5 +264,129 @@ function summarise(gaps: number[]): Waiting | null {
         ? Math.round((sorted[middle - 1] + sorted[middle]) / 2)
         : sorted[middle],
     count: gaps.length,
+  };
+}
+
+// ─── The campaign funnel ────────────────────────────────────────────────────
+
+/**
+ * How long after a campaign message an order or payment still counts as
+ * having come from it.
+ */
+export const CONVERSION_WINDOW_DAYS = 7;
+
+export type FunnelCounts = {
+  sent: number;
+  delivered: number;
+  read: number;
+  replied: number;
+  /** Paid for an order or payment link within CONVERSION_WINDOW_DAYS of it. */
+  converted: number;
+};
+
+export type CampaignFunnel = FunnelCounts & {
+  /**
+   * False when none of these messages went out on the Business API. The QR
+   * connection reports no deliveries or reads, so those two steps can't be
+   * counted, and the screen says so instead of showing zeros.
+   */
+  deliveryTracked: boolean;
+  /**
+   * What delivered and read are out of: messages sent on the Business API
+   * only, since those are the only ones WhatsApp reports on.
+   */
+  deliveryBase: number;
+  campaigns: (FunnelCounts & { id: string; name: string; tier: "QR" | "API"; startedAt: string })[];
+};
+
+type FunnelRow = {
+  campaignId: string;
+  sent: bigint;
+  delivered: bigint;
+  read: bigint;
+  replied: bigint;
+  converted: bigint;
+};
+
+/**
+ * Sent → delivered → read → replied → converted, for campaign messages sent
+ * in the period, overall and per campaign (the latest ten).
+ *
+ * Each step counts people, not events, and later steps imply earlier ones —
+ * someone who replied was delivered to, even if the receipt never arrived.
+ */
+export async function readCampaignFunnel(businessId: string, period: Period = "30d"): Promise<CampaignFunnel> {
+  const since = period === "all" ? null : new Date(Date.now() - (period === "7d" ? 7 : 30) * DAY);
+
+  // Raw SQL: "paid within seven days of *this* message" compares each
+  // recipient's own send time with orders and payments, which Prisma's query
+  // builder can't express. Everything is scoped by the business id.
+  const rows = await db.$queryRaw<FunnelRow[]>`
+    SELECT r."campaignId" AS "campaignId",
+      COUNT(*) FILTER (WHERE r."sentAt" IS NOT NULL) AS "sent",
+      COUNT(*) FILTER (WHERE r."sentAt" IS NOT NULL AND (r."deliveredAt" IS NOT NULL OR r."status" IN ('DELIVERED', 'READ', 'REPLIED'))) AS "delivered",
+      COUNT(*) FILTER (WHERE r."sentAt" IS NOT NULL AND (r."readAt" IS NOT NULL OR r."status" IN ('READ', 'REPLIED'))) AS "read",
+      COUNT(*) FILTER (WHERE r."sentAt" IS NOT NULL AND (r."repliedAt" IS NOT NULL OR r."status" = 'REPLIED')) AS "replied",
+      COUNT(*) FILTER (WHERE r."sentAt" IS NOT NULL AND c."contactId" IS NOT NULL AND (
+        EXISTS (
+          SELECT 1 FROM "orders" o
+          WHERE o."businessId" = ${businessId} AND o."contactId" = c."contactId"
+            AND o."status" IN ('PAID', 'FULFILLED', 'PARTIALLY_REFUNDED')
+            AND o."placedAt" >= r."sentAt"
+            AND o."placedAt" < r."sentAt" + make_interval(days => ${CONVERSION_WINDOW_DAYS})
+        ) OR EXISTS (
+          SELECT 1 FROM "payments" p
+          WHERE p."businessId" = ${businessId} AND p."contactId" = c."contactId"
+            AND p."paidAt" >= r."sentAt"
+            AND p."paidAt" < r."sentAt" + make_interval(days => ${CONVERSION_WINDOW_DAYS})
+        )
+      )) AS "converted"
+    FROM "campaign_recipients" r
+    JOIN "campaigns" k ON k."id" = r."campaignId"
+    JOIN "conversations" c ON c."id" = r."conversationId"
+    WHERE k."businessId" = ${businessId}
+      ${since ? Prisma.sql`AND r."sentAt" >= ${since}` : Prisma.empty}
+    GROUP BY r."campaignId"
+  `;
+
+  const campaigns = await db.campaign.findMany({
+    where: { businessId, id: { in: rows.map((row) => row.campaignId) } },
+    select: { id: true, name: true, tier: true, startedAt: true, scheduledFor: true, createdAt: true },
+  });
+  const byId = new Map(campaigns.map((campaign) => [campaign.id, campaign]));
+
+  const counted = rows
+    .map((row) => {
+      const campaign = byId.get(row.campaignId);
+
+      if (!campaign) return null;
+
+      return {
+        id: campaign.id,
+        name: campaign.name,
+        tier: campaign.tier,
+        startedAt: (campaign.startedAt ?? campaign.scheduledFor ?? campaign.createdAt).toISOString(),
+        sent: Number(row.sent),
+        delivered: Number(row.delivered),
+        read: Number(row.read),
+        replied: Number(row.replied),
+        converted: Number(row.converted),
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null && row.sent > 0)
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+
+  const total = (key: keyof FunnelCounts, rowsToCount = counted) => rowsToCount.reduce((sum, row) => sum + row[key], 0);
+  const onApi = counted.filter((row) => row.tier === "API");
+
+  return {
+    sent: total("sent"),
+    delivered: total("delivered", onApi),
+    read: total("read", onApi),
+    replied: total("replied"),
+    converted: total("converted"),
+    deliveryTracked: onApi.length > 0,
+    deliveryBase: total("sent", onApi),
+    campaigns: counted.slice(0, 10),
   };
 }

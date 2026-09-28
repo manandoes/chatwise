@@ -2247,6 +2247,48 @@ that is an argument rather than a look.
 
 ---
 
+## Session Update — 2026-09-28 (team inbox, campaign funnel, sign-in outage)
+
+- **Completed:**
+  - **Team inbox.** Conversations has tabs — All, Unread, Unassigned, Mine,
+    Urgent — with counts; each row shows who has it and an Urgent badge, and
+    urgent threads sort first. A thread can be handed to a team member (they
+    are notified), marked urgent or cleared, and carries **team notes** with
+    @mentions (mentioned people are notified; notes never reach the customer).
+    The AI's summary shows at the top when there is one. Replies typed in the
+    inbox record who sent them (`Message.sentById`), and replying to an
+    unassigned thread assigns it to you. A **bell** in the top bar lists
+    mentions, hand-overs and urgent customers (`lib/team-inbox.ts`,
+    `/api/notifications`). The old single note is now labelled "Pinned note".
+  - **Campaign funnel** on Analytics: sent → delivered → read → replied →
+    bought, overall and for the latest ten campaigns (`readCampaignFunnel`).
+  - `/api/health` now reports `signIn: "not configured"` (503) when
+    AUTH_SECRET is missing.
+- **Sign-in outage found:** on https://chatwise-xi.vercel.app every Auth.js
+  endpoint (`/api/auth/csrf`, `/session`, `/providers`) returned 500 "There
+  was a problem with the server configuration", so nobody could log in. Reproduced
+  locally: that exact response is Auth.js's `MissingSecret`. **Fix: set
+  AUTH_SECRET in the Vercel project's environment variables (Production) and
+  redeploy.** Not a code change; this session has no Vercel access.
+- **Verified:** typecheck, lint; 32 inbox checks through signed-in sessions
+  (another business's members/threads refused, notifications only ever the
+  recipient's own, views, ordering, pages render).
+
+### Decisions and assumptions (please confirm)
+
+- **Unread is shared by the team** (one count per thread, as before), not per
+  person.
+- **Replying claims an unassigned thread**; it never takes one from someone
+  else. Assigning to yourself sends no notification.
+- **An AI-flagged urgent thread notifies its assignee, or every owner** if
+  nobody has it — once, until a person clears it.
+- **"Bought"** means an order was paid, or a payment link paid, within 7 days of
+  the campaign message. Delivered and read are counted only for Business API
+  messages; a WhatsApp Web (QR) connection doesn't report them, and the screen
+  says so.
+
+---
+
 ## Session Update — [DATE]
 - Worked on:
 - Completed:

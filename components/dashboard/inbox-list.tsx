@@ -7,6 +7,9 @@
 // the thing it is showing happens somewhere else entirely — on a customer's
 // phone — and nobody should have to press reload to find out.
 //
+// The tabs across the top are the team's views of it — unread, nobody's yet,
+// mine, urgent — and every row says who has it and whether it's urgent.
+//
 // It stops asking while the tab is in the background. A dashboard left open on
 // a second monitor all day should not keep a database busy on behalf of nobody
 // (docs/Rules.md §4).
@@ -16,19 +19,43 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { InboxRow } from "@/lib/conversations";
+import type { InboxView } from "@/lib/team-inbox";
 import { formatWhen } from "@/lib/format-when";
 import { maskPhone } from "@/lib/phone-mask";
 
 /** How often the list re-asks, while somebody is actually looking at it. */
 const REFRESH_MS = 10_000;
 
+type Counts = { unread: number; unassigned: number; mine: number; urgent: number };
+
+const VIEWS: { view: InboxView; label: string; count?: keyof Counts }[] = [
+  { view: "all", label: "All" },
+  { view: "unread", label: "Unread", count: "unread" },
+  { view: "unassigned", label: "Unassigned", count: "unassigned" },
+  { view: "mine", label: "Mine", count: "mine" },
+  { view: "urgent", label: "Urgent", count: "urgent" },
+];
+
+const EMPTY_VIEW: Record<InboxView, string> = {
+  all: "",
+  unread: "Nothing unread — you're all caught up.",
+  unassigned: "Every conversation has someone handling it.",
+  mine: "Nothing is assigned to you. Conversations you reply to, or that someone hands you, show up here.",
+  urgent: "Nothing urgent right now.",
+};
+
 export function InboxList({
   initial,
+  initialCounts,
+  view,
   tags,
   activeTag,
   maskPhone: shouldMaskPhone,
 }: {
   initial: InboxRow[];
+  initialCounts: Counts;
+  /** Which of the team's views is showing, from the URL. */
+  view: InboxView;
   /** Every tag in use, for the filter dropdown. */
   tags: string[];
   /** The tag currently filtering the list, from the URL. */
@@ -40,24 +67,26 @@ export function InboxList({
   const searchParams = useSearchParams();
 
   const [rows, setRows] = useState(initial);
+  const [counts, setCounts] = useState(initialCounts);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const query = activeTag ? `?tag=${encodeURIComponent(activeTag)}` : "";
-      const response = await fetch(`/api/conversations${query}`);
+      const query = new URLSearchParams({ view, ...(activeTag ? { tag: activeTag } : {}) });
+      const response = await fetch(`/api/conversations?${query.toString()}`);
 
       if (!response.ok) return;
 
-      const payload = (await response.json()) as { conversations: InboxRow[] };
+      const payload = (await response.json()) as { conversations: InboxRow[]; counts: Counts };
 
       setRows(payload.conversations);
+      setCounts(payload.counts);
     } catch {
       // A dropped poll is not worth interrupting anyone over — the next one
       // picks it up, and the list on screen is still the last true thing we
       // knew.
     }
-  }, [activeTag]);
+  }, [activeTag, view]);
 
   useEffect(() => {
     function tick() {
@@ -92,10 +121,49 @@ export function InboxList({
     router.push(`/dashboard/conversations${params.toString() ? `?${params}` : ""}`);
   }
 
+  function chooseView(next: InboxView) {
+    const params = new URLSearchParams(searchParams.toString());
+
+    if (next === "all") params.delete("view");
+    else params.set("view", next);
+
+    router.push(`/dashboard/conversations${params.toString() ? `?${params}` : ""}`);
+  }
+
   const waiting = rows.filter((row) => row.escalatedAt).length;
 
   return (
     <div className="space-y-4">
+      <div role="tablist" aria-label="Views" className="flex flex-wrap gap-1 border-b border-border">
+        {VIEWS.map((option) => (
+          <button
+            key={option.view}
+            type="button"
+            role="tab"
+            aria-selected={view === option.view}
+            onClick={() => chooseView(option.view)}
+            className={[
+              "-mb-px border-b-2 px-3 py-2 text-small transition-colors",
+              view === option.view
+                ? "border-primary font-medium text-text-primary"
+                : "border-transparent text-text-secondary hover:text-text-primary",
+            ].join(" ")}
+          >
+            {option.label}
+            {option.count && counts[option.count] > 0 && (
+              <span
+                className={[
+                  "ml-1.5 rounded-full px-1.5 py-0.5 text-xs",
+                  option.view === "urgent" ? "bg-error/15 text-error" : "bg-surface-elevated text-text-secondary",
+                ].join(" ")}
+              >
+                {counts[option.count]}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
       {tags.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-text-secondary">Filter by tag:</span>
@@ -137,14 +205,16 @@ export function InboxList({
       {rows.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface/50 p-8">
           <h2 className="text-h3 font-semibold text-text-primary">
-            {activeTag ? "No conversations with this tag" : "Nothing yet"}
+            {activeTag ? "No conversations with this tag" : view !== "all" ? "Nothing here" : "Nothing yet"}
           </h2>
           <p className="mt-2 max-w-[62ch] text-pretty text-small leading-relaxed text-text-secondary">
             {activeTag
               ? "Try a different tag, or clear the filter to see everything."
-              : "Once your WhatsApp number is connected and somebody messages it, the conversation shows up here with whatever your agent replied. You don't need to refresh — this page is watching."}
+              : view !== "all"
+                ? EMPTY_VIEW[view]
+                : "Once your WhatsApp number is connected and somebody messages it, the conversation shows up here with whatever your agent replied. You don't need to refresh — this page is watching."}
           </p>
-          {!activeTag && (
+          {!activeTag && view === "all" && (
             <Link
               href="/dashboard/connect-whatsapp"
               className="mt-4 inline-block text-small text-primary underline underline-offset-4"
@@ -204,6 +274,19 @@ export function InboxList({
                   )}
 
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {row.priority === "HIGH" && (
+                      <span
+                        className="inline-block rounded-full bg-error/15 px-2.5 py-0.5 text-xs font-medium text-error"
+                        title={row.priorityReason ?? undefined}
+                      >
+                        Urgent
+                      </span>
+                    )}
+
+                    <span className="inline-block rounded-full bg-surface-elevated px-2.5 py-0.5 text-xs text-text-secondary">
+                      {row.assignee ? row.assignee.name : "Unassigned"}
+                    </span>
+
                     {row.escalatedAt && (
                       <span className="inline-block rounded-full bg-warning/15 px-2.5 py-0.5 text-xs font-medium text-warning">
                         {row.escalatedBy === "HUMAN"

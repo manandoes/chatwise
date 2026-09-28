@@ -20,6 +20,7 @@ import { readThread } from "@/lib/conversations";
 import { getOnboardingState } from "@/lib/onboarding";
 import { maskPhone } from "@/lib/phone-mask";
 import { listQuickReplies } from "@/lib/quick-replies";
+import { listMembers } from "@/lib/team";
 
 export const metadata: Metadata = { title: "Conversation" };
 
@@ -32,9 +33,10 @@ export default async function ConversationPage({
   const user = await requireUser();
   const { business, bot } = await getOnboardingState(user.id);
 
-  const [conversation, quickReplies] = await Promise.all([
+  const [conversation, quickReplies, members] = await Promise.all([
     readThread(business.id, id),
     listQuickReplies(business.id),
+    listMembers(business.id),
   ]);
 
   if (!conversation) notFound();
@@ -63,6 +65,16 @@ export default async function ConversationPage({
       <PageHeader
         title={who}
         description={conversation.contactName?.trim() ? shownPhone : "On WhatsApp"}
+        action={
+          conversation.contactId ? (
+            <Link
+              href={`/dashboard/contacts/${conversation.contactId}`}
+              className="text-small text-primary underline underline-offset-4"
+            >
+              Contact details
+            </Link>
+          ) : undefined
+        }
       />
 
       <ConversationThread
@@ -74,6 +86,13 @@ export default async function ConversationPage({
         initialTags={conversation.tags}
         initialNotes={conversation.notes ?? ""}
         quickReplies={quickReplies}
+        members={members.map((member) => ({ id: member.id, userId: member.userId, name: member.name }))}
+        currentUserId={user.id}
+        summary={
+          conversation.summary && conversation.summaryUpdatedAt
+            ? { text: conversation.summary, at: conversation.summaryUpdatedAt }
+            : null
+        }
       />
     </div>
   );

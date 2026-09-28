@@ -8,6 +8,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { NotificationsBell } from "@/components/dashboard/notifications-bell";
 import { DashboardShell } from "@/components/dashboard/shell";
 import { Button } from "@/components/ui/button";
 import { requireUser, signOut } from "@/lib/auth";
@@ -31,6 +32,8 @@ export default async function DashboardLayout({
 
   const userMenu = (
     <div className="flex items-center gap-3">
+      <NotificationsBell />
+
       <Link
         href="/dashboard/settings"
         className="hidden rounded-md text-small text-text-secondary transition-colors hover:text-text-primary sm:block"

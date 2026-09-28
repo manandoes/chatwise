@@ -15,23 +15,30 @@ import { Button } from "@/components/ui/button";
 import { requireUser } from "@/lib/auth";
 import { listInbox, listUsedTags } from "@/lib/conversations";
 import { getOnboardingState } from "@/lib/onboarding";
+import { findMembership } from "@/lib/team";
+import { inboxCounts, isInboxView } from "@/lib/team-inbox";
 
 export const metadata: Metadata = { title: "Conversations" };
 
 export default async function ConversationsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tag?: string }>;
+  searchParams: Promise<{ tag?: string; view?: string }>;
 }) {
-  const { tag } = await searchParams;
+  const { tag, view: rawView } = await searchParams;
   const user = await requireUser();
   const { business, agent } = await getOnboardingState(user.id);
 
   if (!agent) notFound();
 
-  const [conversations, tags] = await Promise.all([
-    listInbox(business.id, { tag: tag?.trim() || undefined }),
+  const membership = await findMembership(user.id);
+  const memberId = membership?.memberId ?? null;
+  const view = isInboxView(rawView) ? rawView : "all";
+
+  const [conversations, tags, counts] = await Promise.all([
+    listInbox(business.id, { tag: tag?.trim() || undefined, view, memberId }),
     listUsedTags(business.id),
+    inboxCounts(business.id, memberId),
   ]);
 
   return (
@@ -54,8 +61,10 @@ export default async function ConversationsPage({
       <InboxList
         // Remounts (and so resets its polled state) when the tag filter
         // changes, rather than syncing state from a prop in an effect.
-        key={tag?.trim() || "all"}
+        key={`${tag?.trim() || "all"}|${view}`}
         initial={conversations}
+        initialCounts={counts}
+        view={view}
         tags={tags}
         activeTag={tag?.trim() || null}
         maskPhone={business.maskContactPhone}

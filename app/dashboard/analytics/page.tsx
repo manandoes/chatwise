@@ -14,10 +14,12 @@ import Link from "next/link";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Bar, Stat } from "@/components/dashboard/stat";
 import {
+  CONVERSION_WINDOW_DAYS,
   PERIODS,
   PERIOD_LABEL,
   isPeriod,
   readBusinessNumbers,
+  readCampaignFunnel,
   type Period,
   type Waiting,
 } from "@/lib/analytics";
@@ -48,7 +50,10 @@ export default async function AnalyticsPage({
     ? wanted
     : allowed[allowed.length - 1];
 
-  const numbers = await readBusinessNumbers(business.id, period);
+  const [numbers, funnel] = await Promise.all([
+    readBusinessNumbers(business.id, period),
+    readCampaignFunnel(business.id, period),
+  ]);
 
   const agentName = bot ? `Your ${bot.name}` : "Your agent";
   const window = PERIOD_LABEL[period].toLowerCase();
@@ -256,10 +261,98 @@ export default async function AnalyticsPage({
               </div>
             )}
           </section>
+
+          <section className="space-y-4">
+            <h2 className="text-h3 font-semibold text-text-primary">
+              What your campaigns led to
+            </h2>
+
+            {funnel.sent === 0 ? (
+              <p className="text-small text-text-secondary">
+                No campaign messages went out {window === "all time" ? "yet" : `in the ${window}`}.
+              </p>
+            ) : (
+              <>
+                <div className="space-y-4 rounded-lg border border-border bg-surface p-5">
+                  <Bar label="Sent" value={funnel.sent} total={funnel.sent} />
+                  {funnel.deliveryTracked ? (
+                    <>
+                      <Bar
+                        label="Delivered"
+                        value={funnel.delivered}
+                        total={funnel.deliveryBase}
+                        hint={
+                          funnel.deliveryBase < funnel.sent
+                            ? "Business API messages only — a WhatsApp Web connection doesn't report deliveries or reads."
+                            : undefined
+                        }
+                      />
+                      <Bar label="Read" value={funnel.read} total={funnel.deliveryBase} />
+                    </>
+                  ) : (
+                    <p className="text-xs text-text-secondary">
+                      Delivered and read can&rsquo;t be counted: a WhatsApp Web (QR) connection
+                      doesn&rsquo;t report them.
+                    </p>
+                  )}
+                  <Bar label="Replied" value={funnel.replied} total={funnel.sent} />
+                  <Bar
+                    label="Bought"
+                    value={funnel.converted}
+                    total={funnel.sent}
+                    hint={`Paid for an order or a payment link within ${CONVERSION_WINDOW_DAYS} days of the message.`}
+                  />
+                </div>
+
+                <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+                  <table className="w-full text-left text-small">
+                    <thead className="border-b border-border text-text-secondary">
+                      <tr>
+                        <th className="px-4 py-3 font-medium">Campaign</th>
+                        <th className="px-4 py-3 text-right font-medium">Sent</th>
+                        <th className="px-4 py-3 text-right font-medium">Delivered</th>
+                        <th className="px-4 py-3 text-right font-medium">Read</th>
+                        <th className="px-4 py-3 text-right font-medium">Replied</th>
+                        <th className="px-4 py-3 text-right font-medium">Bought</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border tabular-nums">
+                      {funnel.campaigns.map((campaign) => (
+                        <tr key={campaign.id}>
+                          <td className="px-4 py-3">
+                            <Link
+                              href={`/dashboard/campaigns/${campaign.id}`}
+                              className="text-text-primary hover:underline"
+                            >
+                              {campaign.name}
+                            </Link>
+                          </td>
+                          <td className="px-4 py-3 text-right">{campaign.sent}</td>
+                          <td className="px-4 py-3 text-right">
+                            {campaign.tier === "API" ? share(campaign.delivered, campaign.sent) : "—"}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {campaign.tier === "API" ? share(campaign.read, campaign.sent) : "—"}
+                          </td>
+                          <td className="px-4 py-3 text-right">{share(campaign.replied, campaign.sent)}</td>
+                          <td className="px-4 py-3 text-right">{share(campaign.converted, campaign.sent)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </section>
         </>
       )}
     </div>
   );
+}
+
+/** "12 (40%)" — a count, and what share of those sent it is. */
+function share(value: number, of: number) {
+  return of > 0 ? `${value} (${Math.round((value / of) * 100)}%)` : String(value);
 }
 
 /** An answer time, or an honest reason there isn't one. */

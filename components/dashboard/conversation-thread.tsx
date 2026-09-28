@@ -16,6 +16,7 @@
 import { Check, LoaderCircle, MessageSquareText, Send, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { ThreadTeamPanel, type Member } from "@/components/dashboard/thread-team-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -35,6 +36,9 @@ export function ConversationThread({
   initialTags,
   initialNotes,
   quickReplies,
+  members,
+  currentUserId,
+  summary,
 }: {
   conversationId: string;
   /** What to call the customer on screen. */
@@ -46,6 +50,11 @@ export function ConversationThread({
   initialTags: string[];
   initialNotes: string;
   quickReplies: QuickReplyRow[];
+  /** The team, for assigning and @mentions. */
+  members: Member[];
+  /** The signed-in person, so their own replies say "You". */
+  currentUserId: string;
+  summary: { text: string; at: string } | null;
 }) {
   const [messages, setMessages] = useState(initialMessages);
   const [state, setState] = useState(initialState);
@@ -234,6 +243,14 @@ export function ConversationThread({
         onChange={setWhoAnswers}
       />
 
+      <ThreadTeamPanel
+        conversationId={conversationId}
+        state={state}
+        members={members}
+        summary={summary}
+        onChanged={() => void refresh()}
+      />
+
       <TagsAndNotes
         conversationId={conversationId}
         initialTags={initialTags}
@@ -274,7 +291,9 @@ export function ConversationThread({
                     : message.author === "SYSTEM"
                       ? "ChatWise"
                       : message.author === "HUMAN"
-                        ? "You"
+                        ? !message.sentBy || message.sentBy.userId === currentUserId
+                          ? "You"
+                          : message.sentBy.name
                         : message.author === "CAMPAIGN"
                           ? "A campaign you sent"
                           : message.author === "AUTOMATION"
@@ -495,7 +514,7 @@ function TagsAndNotes({
             htmlFor="conversation-notes"
             className="text-small font-medium text-text-primary"
           >
-            Internal note
+            Pinned note
           </label>
           {isSavingNotes ? (
             <LoaderCircle className="size-3.5 animate-spin text-text-secondary" />

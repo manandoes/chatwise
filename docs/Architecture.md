@@ -267,6 +267,8 @@ Designed so a non-technical person can open the file tree and understand what's 
 │   ├── tag-rules.ts                    #   Auto-tags: added and removed by rules; manual tags kept
 │   ├── catalog.ts                      #   Products + meaning-based search (pgvector)
 │   ├── deals.ts                        #   The pipeline board; every change logged in one transaction
+│   ├── team-inbox.ts                   #   Assignment, urgent threads, team notes + @mentions,
+│   │                                   #     and the notifications they raise
 │   ├── automations.ts                  #   Every automated WhatsApp message goes out through here
 │   ├── jobs.ts                         #   Putting background work on the queue
 │   ├── features.ts                     #   Which integrations are switched on; the public app URL

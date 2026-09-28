@@ -84,6 +84,7 @@ export async function POST(
       businessId: found.businessId,
       conversationId: id,
       body: checked.body,
+      sender: { userId: found.userId, memberId: found.memberId },
     });
 
     if (!result.ok) {

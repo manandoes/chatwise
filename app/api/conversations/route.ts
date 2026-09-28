@@ -12,6 +12,7 @@
 import { unexpectedError } from "@/lib/api-response";
 import { requireApiBusiness } from "@/lib/auth";
 import { listInbox } from "@/lib/conversations";
+import { inboxCounts, isInboxView } from "@/lib/team-inbox";
 
 export async function GET(request: Request) {
   try {
@@ -19,11 +20,21 @@ export async function GET(request: Request) {
 
     if (!found.ok) return found.response;
 
-    const tag = new URL(request.url).searchParams.get("tag")?.trim() || undefined;
-    const conversations = await listInbox(found.businessId, { tag });
+    const query = new URL(request.url).searchParams;
+    const tag = query.get("tag")?.trim() || undefined;
+    const view = query.get("view");
+    const [conversations, counts] = await Promise.all([
+      listInbox(found.businessId, {
+        tag,
+        view: isInboxView(view) ? view : "all",
+        memberId: found.memberId,
+      }),
+      inboxCounts(found.businessId, found.memberId),
+    ]);
 
     return Response.json({
       conversations,
+      counts,
       waiting: conversations.filter((row) => row.escalatedAt).length,
     });
   } catch (error) {

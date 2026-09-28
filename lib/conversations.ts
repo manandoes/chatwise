@@ -18,6 +18,7 @@
 import "server-only";
 
 import { db } from "@/lib/db";
+import { claimIfUnassigned, userNames, viewWhere, type InboxView } from "@/lib/team-inbox";
 import { connectorFor } from "@/whatsapp-connectors";
 
 /**
@@ -42,6 +43,11 @@ export type InboxRow = {
   tags: string[];
   /** The last thing said, whoever said it. Null on a brand-new thread. */
   preview: { body: string; fromCustomer: boolean } | null;
+  /** Who on the team is handling it, if anyone. */
+  assignee: { id: string; name: string } | null;
+  /** HIGH when the AI read the customer as angry or urgent, or a person marked it. */
+  priority: "NORMAL" | "HIGH";
+  priorityReason: string | null;
 };
 
 /** One message as the inbox draws it. */
@@ -52,17 +58,25 @@ export type ThreadMessage = {
   author: "CONTACT" | "AGENT" | "HUMAN" | "SYSTEM" | "CAMPAIGN" | "AUTOMATION";
   failureReason: string | null;
   at: string;
+  /** The team member who typed it, for replies written in the inbox. */
+  sentBy: { userId: string; name: string } | null;
 };
 
-/** Whether the agent is answering this thread, and why not if it isn't. */
+/**
+ * Whether the agent is answering this thread and why not if it isn't — and,
+ * since the inbox is shared, who on the team has it and how urgent it is.
+ */
 export type ThreadState = {
   escalatedAt: string | null;
   escalatedBy: "AGENT" | "HUMAN" | null;
   escalationReason: string | null;
+  assignedToId: string | null;
+  priority: "NORMAL" | "HIGH";
+  priorityReason: string | null;
 };
 
 /**
- * Every thread this business has, newest first.
+ * Every thread this business has, urgent ones first, then newest first.
  *
  * Capped at 100. Searching and paging through an older archive is not
  * something an inbox this size needs yet, and a screen that quietly loads
@@ -70,7 +84,13 @@ export type ThreadState = {
  */
 export async function listInbox(
   businessId: string,
-  filter?: { tag?: string },
+  filter?: {
+    tag?: string;
+    /** Unread, unassigned, mine or urgent (lib/team-inbox.ts). */
+    view?: InboxView;
+    /** The signed-in person's membership, for "mine". */
+    memberId?: string | null;
+  },
 ): Promise<InboxRow[]> {
   const rows = await db.conversation.findMany({
     where: {
@@ -79,8 +99,10 @@ export async function listInbox(
       // when it was added — there's no separate tag list to normalise
       // against yet.
       ...(filter?.tag ? { tags: { has: filter.tag } } : {}),
+      ...viewWhere(filter?.view ?? "all", filter?.memberId ?? null),
     },
-    orderBy: { lastMessageAt: "desc" },
+    // HIGH sorts after NORMAL in the enum, so descending puts urgent first.
+    orderBy: [{ priority: "desc" }, { lastMessageAt: "desc" }],
     take: 100,
     select: {
       id: true,
@@ -92,6 +114,9 @@ export async function listInbox(
       escalationReason: true,
       unreadCount: true,
       tags: true,
+      priority: true,
+      priorityReason: true,
+      assignedTo: { select: { id: true, user: { select: { name: true, email: true } } } },
       messages: {
         orderBy: { createdAt: "desc" },
         take: 1,
@@ -116,6 +141,14 @@ export async function listInbox(
           fromCustomer: row.messages[0].direction === "INBOUND",
         }
       : null,
+    assignee: row.assignedTo
+      ? {
+          id: row.assignedTo.id,
+          name: row.assignedTo.user.name?.trim() || row.assignedTo.user.email.split("@")[0],
+        }
+      : null,
+    priority: row.priority,
+    priorityReason: row.priorityReason,
   }));
 }
 
@@ -146,32 +179,36 @@ export async function readThread(businessId: string, id: string) {
       escalatedAt: true,
       escalatedBy: true,
       escalationReason: true,
+      assignedToId: true,
+      priority: true,
+      priorityReason: true,
+      summary: true,
+      summaryUpdatedAt: true,
+      contactId: true,
       tags: true,
       notes: true,
       messages: {
         orderBy: { createdAt: "asc" },
-        select: {
-          id: true,
-          body: true,
-          direction: true,
-          author: true,
-          failureReason: true,
-          createdAt: true,
-        },
+        select: MESSAGE_SELECT,
       },
     },
   });
 
   if (!conversation) return null;
 
+  const names = await senderNames(conversation.messages);
+
   return {
     id: conversation.id,
     contactName: conversation.contactName,
     contactPhone: conversation.contactPhone,
+    contactId: conversation.contactId,
     tags: conversation.tags,
     notes: conversation.notes,
+    summary: conversation.summary,
+    summaryUpdatedAt: conversation.summaryUpdatedAt?.toISOString() ?? null,
     state: toState(conversation),
-    messages: conversation.messages.map(toThreadMessage),
+    messages: conversation.messages.map((message) => toThreadMessage(message, names)),
   };
 }
 
@@ -254,27 +291,25 @@ export async function readThreadSince(
       escalatedAt: true,
       escalatedBy: true,
       escalationReason: true,
+      assignedToId: true,
+      priority: true,
+      priorityReason: true,
       messages: {
         where: after ? { createdAt: { gte: after } } : undefined,
         orderBy: { createdAt: "asc" },
         take: 200,
-        select: {
-          id: true,
-          body: true,
-          direction: true,
-          author: true,
-          failureReason: true,
-          createdAt: true,
-        },
+        select: MESSAGE_SELECT,
       },
     },
   });
 
   if (!conversation) return null;
 
+  const names = await senderNames(conversation.messages);
+
   return {
     state: toState(conversation),
-    messages: conversation.messages.map(toThreadMessage),
+    messages: conversation.messages.map((message) => toThreadMessage(message, names)),
   };
 }
 
@@ -356,10 +391,13 @@ export async function sendHumanReply({
   businessId,
   conversationId,
   body,
+  sender,
 }: {
   businessId: string;
   conversationId: string;
   body: string;
+  /** Who typed it. Recorded on the message, and given the thread if nobody has it. */
+  sender: { userId: string; memberId: string };
 }): Promise<HumanReplyResult> {
   const conversation = await db.conversation.findFirst({
     where: { id: conversationId, businessId },
@@ -406,6 +444,7 @@ export async function sendHumanReply({
       direction: "OUTBOUND",
       author: "HUMAN",
       body,
+      sentById: sender.userId,
       // No `externalId`, deliberately, and the router does the same for
       // everything it sends. That column is UNIQUE because it is what stops a
       // webhook Meta re-sends becoming a second copy of an inbound message —
@@ -413,14 +452,7 @@ export async function sendHumanReply({
       // already received could fail to be written down. Nothing reads outbound
       // ids yet; delivery receipts can add their own column when they arrive.
     },
-    select: {
-      id: true,
-      body: true,
-      direction: true,
-      author: true,
-      failureReason: true,
-      createdAt: true,
-    },
+    select: MESSAGE_SELECT,
   });
 
   // Answering by hand is taking over — but only if the thread was still the
@@ -436,6 +468,10 @@ export async function sendHumanReply({
     },
   });
 
+  // Whoever answers an unassigned thread has it now, so the rest of the team
+  // can see it's handled. A thread someone else has stays theirs.
+  await claimIfUnassigned(businessId, conversation.id, sender.memberId);
+
   const updated = await db.conversation.update({
     where: { id: conversation.id },
     data: { lastMessageAt: now },
@@ -443,12 +479,15 @@ export async function sendHumanReply({
       escalatedAt: true,
       escalatedBy: true,
       escalationReason: true,
+      assignedToId: true,
+      priority: true,
+      priorityReason: true,
     },
   });
 
   return {
     ok: true,
-    message: toThreadMessage(saved),
+    message: toThreadMessage(saved, await senderNames([saved])),
     state: toState(updated),
   };
 }
@@ -548,22 +587,48 @@ function toState(row: {
   escalatedAt: Date | null;
   escalatedBy: "AGENT" | "HUMAN" | null;
   escalationReason: string | null;
+  assignedToId: string | null;
+  priority: "NORMAL" | "HIGH";
+  priorityReason: string | null;
 }): ThreadState {
   return {
     escalatedAt: row.escalatedAt?.toISOString() ?? null,
     escalatedBy: row.escalatedBy,
     escalationReason: row.escalationReason,
+    assignedToId: row.assignedToId,
+    priority: row.priority,
+    priorityReason: row.priorityReason,
   };
 }
 
-function toThreadMessage(row: {
-  id: string;
-  body: string;
-  direction: "INBOUND" | "OUTBOUND";
-  author: "CONTACT" | "AGENT" | "HUMAN" | "SYSTEM" | "CAMPAIGN" | "AUTOMATION";
-  failureReason: string | null;
-  createdAt: Date;
-}): ThreadMessage {
+/** The columns every screen that draws a message needs. */
+const MESSAGE_SELECT = {
+  id: true,
+  body: true,
+  direction: true,
+  author: true,
+  failureReason: true,
+  createdAt: true,
+  sentById: true,
+} as const;
+
+/** Who typed each inbox reply, in one query for the whole batch. */
+async function senderNames(rows: { sentById: string | null }[]) {
+  return userNames([...new Set(rows.map((row) => row.sentById).filter((id): id is string => Boolean(id)))]);
+}
+
+function toThreadMessage(
+  row: {
+    id: string;
+    body: string;
+    direction: "INBOUND" | "OUTBOUND";
+    author: "CONTACT" | "AGENT" | "HUMAN" | "SYSTEM" | "CAMPAIGN" | "AUTOMATION";
+    failureReason: string | null;
+    createdAt: Date;
+    sentById: string | null;
+  },
+  names: Map<string, string>,
+): ThreadMessage {
   return {
     id: row.id,
     body: row.body,
@@ -571,5 +636,6 @@ function toThreadMessage(row: {
     author: row.author,
     failureReason: row.failureReason,
     at: row.createdAt.toISOString(),
+    sentBy: row.sentById ? { userId: row.sentById, name: names.get(row.sentById) ?? "Your team" } : null,
   };
 }

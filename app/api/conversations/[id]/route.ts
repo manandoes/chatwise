@@ -7,6 +7,8 @@
 //   { read: true }        somebody has looked at it, clear the "new" count
 //   { tags: [...] }       replace this thread's tags
 //   { notes: "..." }      save this thread's internal note
+//   { assignedTo: id }    hand it to a team member (null: nobody)
+//   { priority: "HIGH" }  mark it urgent ("NORMAL" clears it)
 //
 // The business id comes from the signed-in session and goes into the WHERE
 // clause alongside the conversation id, so an id belonging to another account
@@ -23,6 +25,8 @@ import {
   updateConversationNotes,
   updateConversationTags,
 } from "@/lib/conversations";
+import { db } from "@/lib/db";
+import { assignConversation, setConversationPriority } from "@/lib/team-inbox";
 
 export async function PATCH(
   request: Request,
@@ -39,6 +43,8 @@ export async function PATCH(
       read?: unknown;
       tags?: unknown;
       notes?: unknown;
+      assignedTo?: unknown;
+      priority?: unknown;
     } | null;
 
     let didSomething = false;
@@ -101,6 +107,40 @@ export async function PATCH(
 
       didSomething = true;
       result.escalated = body.escalated;
+    }
+
+    if (body?.assignedTo !== undefined) {
+      if (body.assignedTo !== null && typeof body.assignedTo !== "string") {
+        return apiError("Choose someone on your team.", "VALIDATION_FAILED", 400);
+      }
+
+      const actor = await db.user.findUnique({ where: { id: found.userId }, select: { name: true, email: true } });
+      const done = await assignConversation({
+        businessId: found.businessId,
+        conversationId: id,
+        memberId: body.assignedTo || null,
+        actor: { userId: found.userId, name: actor?.name?.trim() || actor?.email.split("@")[0] || "Someone" },
+      });
+
+      if (!done.ok) {
+        return apiError(done.message, done.status === 404 ? "NOT_FOUND" : "VALIDATION_FAILED", done.status);
+      }
+
+      didSomething = true;
+      result.assignedTo = body.assignedTo || null;
+    }
+
+    if (body?.priority !== undefined) {
+      if (body.priority !== "HIGH" && body.priority !== "NORMAL") {
+        return apiError("Mark it urgent, or not.", "VALIDATION_FAILED", 400);
+      }
+
+      if (!(await setConversationPriority(found.businessId, id, body.priority))) {
+        return apiError("That conversation doesn't exist.", "NOT_FOUND", 404);
+      }
+
+      didSomething = true;
+      result.priority = body.priority;
     }
 
     if (!didSomething) {
