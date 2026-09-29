@@ -309,7 +309,17 @@ const commandWorker = new Worker<SessionCommand>(
         break;
     }
   },
-  { connection: redis, concurrency: 20 },
+  {
+    connection: redis,
+    concurrency: 20,
+    // Our Redis bills per request, and an idle worker is almost all of them:
+    // BullMQ's defaults (a 5s blocking poll, a 30s stalled-job sweep) cost
+    // ~600k requests a month with no traffic at all, which exhausted the plan.
+    // A new job wakes the blocking poll immediately, so a longer one adds no
+    // latency; commands finish in milliseconds, so a slower sweep is harmless.
+    drainDelay: 60,
+    stalledInterval: 300_000,
+  },
 );
 
 commandWorker.on("failed", (job, error) => {

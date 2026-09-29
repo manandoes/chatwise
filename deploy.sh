@@ -24,6 +24,8 @@ docker run -d \
   --name "$CONTAINER" \
   --restart unless-stopped \
   --network chatwise-net \
+  --log-opt max-size=50m \
+  --log-opt max-file=3 \
   --env-file .env \
   "$IMAGE"
 
