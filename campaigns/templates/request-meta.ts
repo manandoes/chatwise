@@ -92,7 +92,7 @@ export async function submitTemplateToMeta(templateId: string): Promise<SubmitRe
   if (!result.ok) {
     return {
       ok: false,
-      message: result.message,
+      message: (result as { ok: false; status: number; message: string }).message,
       draft: { metaName: template.metaName ?? "", metaLanguage: template.metaLanguage ?? "", body: template.body },
     };
   }
