@@ -168,8 +168,8 @@ model Business {
   bookings           Booking[]
   products           Product[]
 
-  /// When the AI flags an inbound message as urgent or angry, stop the agent
-  /// and hand the thread to a person instead of letting the bot answer it.
+  /// When the AI flags an inbound message as urgent or angry, stop the agent and
+  /// hand the thread to a person instead of letting the bot answer it.
   escalateUrgentToHuman Boolean @default(false)
 
   @@map("businesses")
@@ -472,6 +472,9 @@ model Conversation {
   /// put it first. Cleared by a person.
   priority       ConversationPriority @default(NORMAL)
   priorityReason String?
+  /// When a human first replied after escalation — used for SLA tracking.
+  /// Cleared when the thread is let go back to the agent.
+  firstHumanResponseAt DateTime?
 
   /// A few sentences for whoever picks the thread up: the last topic, what is
   /// still unanswered, and how the customer seems. Written by the AI on
@@ -495,6 +498,8 @@ model Conversation {
   @@index([contactId])
   @@index([businessId, assignedToId])
   @@index([businessId, priority])
+  /// SLA tracking: threads escalated longest without a human reply surface first.
+  @@index([businessId, escalatedAt, priority])
   @@map("conversations")
 }
 
@@ -1071,6 +1076,12 @@ model Subscription {
   /// billing screen can say "you move to Starter on the 4th" rather than
   /// pretending nothing is happening.
   pendingPlan PlanId?
+
+  /// Which add-ons this account has purchased, as JSON keys.
+  /// e.g. {"integrations": true, "aiProductSearch": true, "aiInsights": true}
+  /// Controlled separately from the plan — an add-on can be toggled without
+  /// changing the base plan or Razorpay subscription.
+  addons Json @default("{}")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -73,6 +73,8 @@ export type ThreadState = {
   assignedToId: string | null;
   priority: "NORMAL" | "HIGH";
   priorityReason: string | null;
+  /** When a human first replied after escalation, for SLA tracking. */
+  firstHumanResponseAt: string | null;
 };
 
 /**
@@ -182,6 +184,7 @@ export async function readThread(businessId: string, id: string) {
       assignedToId: true,
       priority: true,
       priorityReason: true,
+      firstHumanResponseAt: true,
       summary: true,
       summaryUpdatedAt: true,
       contactId: true,
@@ -294,6 +297,7 @@ export async function readThreadSince(
       assignedToId: true,
       priority: true,
       priorityReason: true,
+      firstHumanResponseAt: true,
       messages: {
         where: after ? { createdAt: { gte: after } } : undefined,
         orderBy: { createdAt: "asc" },
@@ -468,6 +472,21 @@ export async function sendHumanReply({
     },
   });
 
+  // Track when a human first responded after an escalation — used for SLA
+  // measurement (Gap 5). We only write this once; subsequent human replies
+  // don't reset it.
+  const alreadyEscalated = await db.conversation.findFirst({
+    where: { id: conversation.id, escalatedAt: { not: null } },
+    select: { id: true, firstHumanResponseAt: true },
+  });
+
+  if (alreadyEscalated && !alreadyEscalated.firstHumanResponseAt) {
+    await db.conversation.update({
+      where: { id: conversation.id },
+      data: { firstHumanResponseAt: now },
+    });
+  }
+
   // Whoever answers an unassigned thread has it now, so the rest of the team
   // can see it's handled. A thread someone else has stays theirs.
   await claimIfUnassigned(businessId, conversation.id, sender.memberId);
@@ -482,6 +501,7 @@ export async function sendHumanReply({
       assignedToId: true,
       priority: true,
       priorityReason: true,
+      firstHumanResponseAt: true,
     },
   });
 
@@ -590,6 +610,7 @@ function toState(row: {
   assignedToId: string | null;
   priority: "NORMAL" | "HIGH";
   priorityReason: string | null;
+  firstHumanResponseAt: Date | null;
 }): ThreadState {
   return {
     escalatedAt: row.escalatedAt?.toISOString() ?? null,
@@ -598,6 +619,7 @@ function toState(row: {
     assignedToId: row.assignedToId,
     priority: row.priority,
     priorityReason: row.priorityReason,
+    firstHumanResponseAt: row.firstHumanResponseAt?.toISOString() ?? null,
   };
 }
 

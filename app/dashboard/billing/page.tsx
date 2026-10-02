@@ -18,6 +18,9 @@ import { formatDate } from "@/lib/format-when";
 import { getOnboardingState } from "@/lib/onboarding";
 import {
   PLANS,
+  ADDON_IDS,
+  ADDON_NAMES,
+  ADDON_PRICES,
   billingNote,
   formatLimit,
   formatRupees,
@@ -241,6 +244,55 @@ export default async function BillingPage() {
           unavailablePlanIds={unavailablePlanIds}
           hasSubscription={account.hasRazorpaySubscription}
         />
+      </section>
+
+      {/* ─── Add-ons ──────────────────────────────────────────────────── */}
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-h3 font-semibold text-text-primary">Add-ons</h2>
+          <p className="mt-1 max-w-[68ch] text-pretty text-small leading-relaxed text-text-secondary">
+            Extra features you can turn on alongside your plan. Each one is a
+            monthly charge added to your bill.
+          </p>
+        </div>
+
+        {ADDON_IDS.map((addonId) => {
+          const active = account.addons?.[addonId] === true;
+          const name = ADDON_NAMES[addonId];
+          const price = ADDON_PRICES[addonId];
+
+          return (
+            <div
+              key={addonId}
+              className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4 ${
+                active
+                  ? "border-primary/40 bg-primary/5"
+                  : "border-border bg-surface/50"
+              }`}
+            >
+              <div>
+                <p className="font-medium text-text-primary">{name}</p>
+                <p className="mt-0.5 text-xs text-text-secondary">
+                  {addonId === "integrations"
+                    ? "Shopify, Google Sheets & Calendly"
+                    : addonId === "aiProductSearch"
+                      ? "Smart product recommendations from your live catalog"
+                      : "AI summaries, sentiment & lead scoring"}
+                </p>
+              </div>
+
+              <div className="text-right">
+                <p className="font-semibold text-text-primary">
+                  {formatRupees(price)}
+                  <span className="text-xs font-normal text-text-secondary"> /mo</span>
+                </p>
+                {active && (
+                  <p className="mt-0.5 text-xs text-primary">Active</p>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </section>
 
       {/* ─── Invoices ─────────────────────────────────────────────────── */}

@@ -24,6 +24,18 @@ import type { ThreadMessage, ThreadState } from "@/lib/conversations";
 import { formatWhen } from "@/lib/format-when";
 import type { QuickReplyRow } from "@/lib/quick-replies";
 
+/** Short relative time, e.g. "3 minutes ago" or "2 hours ago". */
+function formatWhenRelative(from: Date): string {
+  const seconds = Math.floor((Date.now() - from.getTime()) / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 /** How often an open thread re-asks what has been said. */
 const REFRESH_MS = 5_000;
 
@@ -594,6 +606,21 @@ function WhoIsAnswering({
           My agent can carry on
         </Button>
       </div>
+
+      {/* Gap 5: SLA clock — show how long a human has had this thread. */}
+      {state.escalatedAt && state.firstHumanResponseAt && (
+        <p className="mt-3 text-xs text-text-secondary">
+          First human reply{" "}
+          {formatWhenRelative(new Date(state.firstHumanResponseAt))} —{" "}
+          {formatWhenRelative(new Date(state.escalatedAt))} after escalation.
+        </p>
+      )}
+      {state.escalatedAt && !state.firstHumanResponseAt && (
+        <p className="mt-3 text-xs text-warning">
+          No human reply yet — waiting{" "}
+          {formatWhenRelative(new Date())} since escalation.
+        </p>
+      )}
     </div>
   );
 }

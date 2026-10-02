@@ -86,6 +86,10 @@ type IncomingMessage = {
   timestamp?: string;
   type?: string;
   text?: { body?: string };
+  /** Media URL the Business API gives us for audio, image, video, document. */
+  url?: string;
+  /** MIME type of the media file (audio/ogg, image/jpeg, etc.). */
+  mimetype?: string;
 };
 
 type WebhookPayload = {
@@ -226,6 +230,10 @@ async function handleOneMessage(
       contactName: context.names.get(from) ?? null,
       externalId: message.id ?? null,
       at: timestampToDate(message.timestamp),
+      // Pass media info through so the router can transcribe/analyse when
+      // FEATURE_VOICE_MEDIA is enabled.
+      mediaType: isText ? null : (message.type ?? null),
+      mediaUrl: !isText && message.url ? String(message.url) : null,
     },
     async (reply) => {
       const sent = await sendTextMessage({

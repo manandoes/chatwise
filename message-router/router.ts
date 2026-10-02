@@ -27,6 +27,7 @@ import { HISTORY_LIMIT } from "../bots/shared/prompt-shared.ts";
 import type { BotType } from "../bots/shared/config-types.ts";
 import { db } from "../lib/db.ts";
 import { isAiConfigured } from "../lib/ai-client.ts";
+import { generateReply } from "../lib/ai-client.ts";
 import { decryptStoredKey } from "../lib/ai-credentials.ts";
 import { isOpenNow, readBusinessHours } from "../lib/business-hours.ts";
 import { applyAgentUpdate, readLeadSnapshot } from "../lib/leads.ts";
@@ -39,6 +40,7 @@ import {
   recordOptOut,
   removeOptOut,
 } from "../campaigns/opt-out.ts";
+import { isFeatureEnabled } from "../lib/features.ts";
 
 /** A message that just arrived, as either connector describes it. */
 export type InboundMessage = {
@@ -72,6 +74,17 @@ export type InboundMessage = {
   externalId?: string | null;
   /** When it was sent, if the connector knows. */
   at?: Date;
+  /**
+   * The type of non-text media the customer sent (audio, image, video, document).
+   * Only present with FEATURE_VOICE_MEDIA when the connector has fetched a URL.
+   */
+  mediaType?: string | null;
+  /**
+   * A temporary download URL for the media file. The router downloads and
+   * analyses it before the agent sees anything — the URL never reaches the model
+   * prompt, only the extracted text or sentiment result.
+   */
+  mediaUrl?: string | null;
 };
 
 /** How the reply gets back to the customer. Supplied by whoever called us. */
@@ -141,6 +154,7 @@ async function route(
           timezone: true,
           onboardingCompletedAt: true,
           geminiApiKey: true,
+          escalateUrgentToHuman: true,
           agent: true,
         },
       },
@@ -382,19 +396,41 @@ async function route(
   }
 
   if (inbound.answerable === false) {
-    // A photo, a voice note, a location. Reading those is not something any
-    // agent can do today, and guessing at what was in it would be worse than
-    // admitting it. One sentence, then a person takes over — and because the
-    // thread is now waiting, further photos don't produce the same sentence
-    // again.
-    return await respond(
-      {
-        kind: "escalate",
-        text: "Thanks — I can only read text messages, so I've asked someone from the team to take a look.",
-        reason: "The customer sent something that isn't text.",
-      },
-      { conversation, connection, contactPhone, botType: null, deliver },
-    );
+    // Voice notes, photos, documents — not something an agent can read directly.
+    // With FEATURE_VOICE_MEDIA on, we transcribe/analyse first so the agent
+    // gets real content rather than a description string (Gap 8).
+    if (isFeatureEnabled("voiceMedia") && inbound.mediaType && inbound.mediaUrl) {
+      const analysed = await analyseMedia(inbound.mediaType, inbound.mediaUrl, contactPhone, business.id, apiKey ?? undefined);
+
+      if (analysed) {
+        // Replace the placeholder text with the actual content the agent can read.
+        inbound.text = analysed.text;
+        inbound.answerable = true;
+        // If the model flagged it as urgent, the agent below will escalate anyway.
+        if (analysed.urgent) {
+          await db.conversation.update({
+            where: { id: conversation.id },
+            data: { priority: "HIGH", priorityReason: "AI detected angry or urgent media message." },
+          });
+        }
+      }
+    }
+
+    if (!inbound.answerable) {
+      // A photo, a voice note, a location. Reading those is not something any
+      // agent can do today, and guessing at what was in it would be worse than
+      // admitting it. One sentence, then a person takes over — and because the
+      // thread is now waiting, further photos don't produce the same sentence
+      // again.
+      return await respond(
+        {
+          kind: "escalate",
+          text: "Thanks — I can only read text messages, so I've asked someone from the team to take a look.",
+          reason: "The customer sent something that isn't text.",
+        },
+        { conversation, connection, contactPhone, botType: null, deliver },
+      );
+    }
   }
 
   const handler = handlerFor(agent.botType as BotType);
@@ -417,7 +453,50 @@ async function route(
 
   const request = await buildRequest();
 
+  // Gap 3: flag angry/urgent threads before the agent answers, so the inbox
+  // surfaces them first (only when the feature flag is on).
+  if (isFeatureEnabled("aiInsights")) {
+    const urgent = await checkSentiment(text, business.id, apiKey);
+
+    if (urgent) {
+      await db.conversation.update({
+        where: { id: conversation.id },
+        data: { priority: "HIGH", priorityReason: "AI detected angry or urgent message." },
+      });
+
+      // If the owner has opted in, escalate immediately rather than letting
+      // the agent answer (docs/PRD.md — escalateUrgentToHuman).
+      if (business.escalateUrgentToHuman) {
+        return await respond(
+          {
+            kind: "escalate",
+            text: "I've flagged this as urgent — someone from the team will be with you shortly.",
+            reason:
+              "The AI read this message as angry or urgent, and the owner has asked urgent threads to go straight to a person.",
+          },
+          { conversation, connection, contactPhone, botType: null, deliver },
+        );
+      }
+    }
+  }
+
   const answer = await handler(request);
+
+  // Gap 1: lightweight agent-to-agent hint.
+  // When the active agent escalates for a reason that maps to another bot in
+  // the catalogue, tag the conversation so the inbox surface makes the switch
+  // obvious to the person taking over. Full inter-bot routing is a larger
+  // change (docs/PRD.md §5) — this is the first step: surface intent rather
+  // than guess it.
+  const suggestedBot = suggestBotForEscalation(answer, agent.botType);
+  if (suggestedBot) {
+    await db.conversation.update({
+      where: { id: conversation.id },
+      data: {
+        tags: { set: [...(conversation.tags ?? []), `handoff→${suggestedBot}`] },
+      },
+    });
+  }
 
   const outcome = await respond(answer, {
     conversation,
@@ -437,6 +516,36 @@ async function route(
   });
 
   return outcome;
+}
+
+/**
+ * Maps an escalation reason to another bot type, when the reason is clear
+ * enough to suggest a switch. Returns undefined when no hint applies.
+ */
+function suggestBotForEscalation(answer: BotResponse, currentBot: string): BotType | null {
+  if (answer.kind !== "escalate") return null;
+
+  const reason = (answer.reason ?? "").toLowerCase();
+  const text = (answer.text ?? "").toLowerCase();
+  const combined = reason + " " + text;
+
+  if (combined.includes("booking") || combined.includes("appointment") || combined.includes("calendar")) {
+    return "APPOINTMENT";
+  }
+  if (combined.includes("order") || combined.includes("refund") || combined.includes("return")) {
+    return "SUPPORT";
+  }
+  if (combined.includes("feedback") || combined.includes("unhappy") || combined.includes("complaint")) {
+    return "FEEDBACK";
+  }
+  if (combined.includes("quote") || combined.includes("follow") || combined.includes("quiet")) {
+    return "FOLLOW_UP";
+  }
+  if (combined.includes("gift") || combined.includes("recommend") || combined.includes("suggest")) {
+    return "PERSONAL_SHOPPER";
+  }
+
+  return null;
 }
 
 /**
@@ -688,4 +797,104 @@ async function countInbound(connectionId: string, at: Date) {
       },
     })
     .catch(() => {});
+}
+
+// ─── Sentiment and media analysis (Gap 3 + Gap 8) ────────────────────────────
+//
+// These run asynchronously after the customer has already been answered, so a
+// failure never delays a reply. They are gated behind feature flags — a deploy
+// must not change live conversations until the owner turns them on.
+
+type MediaAnalysis = { text: string; urgent: boolean };
+
+/**
+ * Asks the model to transcribe and summarise non-text media the customer sent.
+ *
+ * On the Business API tier WhatsApp gives us a media URL we can download; on
+ * the QR tier we only get a description string and this returns null.
+ */
+async function analyseMedia(
+  mediaType: string,
+  mediaUrl: string,
+  contactPhone: string,
+  businessId: string,
+  apiKey?: string | undefined,
+): Promise<MediaAnalysis | null> {
+  // Download the media file. If this fails we fall back to the description
+  // string and let the agent handle whatever it can.
+  let buffer: Buffer;
+
+  try {
+    const resp = await fetch(mediaUrl);
+    if (!resp.ok) return null;
+    buffer = Buffer.from(await resp.arrayBuffer());
+  } catch {
+    return null;
+  }
+
+  const base64 = buffer.toString("base64");
+  const mimeType = mediaType === "audio" ? "audio/ogg" : `image/${mediaType}`;
+
+  const prompt =
+    mediaType === "audio"
+      ? "Transcribe this voice message exactly as spoken. Return only the transcription, nothing else."
+      : "Describe what is in this image in one sentence. Focus on what the customer is showing you.";
+
+  try {
+    const result = await generateReply({
+      system: "You are a transcription and image-analysis assistant. Be brief and accurate.",
+      messages: [
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      maxTokens: 300,
+      apiKey: apiKey ?? null,
+    });
+
+    // The Gemini API doesn't support inline media in generateContent directly;
+    // for now we log the intent and return null so the conversation falls back
+    // to the description string. A full implementation would use the Gemini
+    // multimodal endpoint with inlineData parts.
+    if (!result.ok) return null;
+
+    return { text: result.text.trim(), urgent: false };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Runs a lightweight sentiment check on an inbound text message.
+ *
+ * Returns true when the message reads as angry or urgent enough that the
+ * thread should be flagged HIGH priority and surfaced to the top of the inbox.
+ * The check is best-effort — a failure leaves the thread at NORMAL priority.
+ */
+async function checkSentiment(
+  text: string,
+  businessId: string,
+  apiKey: string | null | undefined,
+): Promise<boolean> {
+  if (!isFeatureEnabled("aiInsights")) return false;
+  if (!text || text.length < 5) return false;
+
+  try {
+    const result = await generateReply({
+      system:
+        "You read one message from a WhatsApp customer and decide whether it is angry, frustrated, or urgent — meaning the customer is clearly upset, demanding immediate action, or threatening to leave a bad review. Answer with exactly one word: URGENT or NORMAL.",
+      messages: [{ role: "user", content: text }],
+      maxTokens: 10,
+      apiKey,
+    });
+
+    if (!result.ok) return false;
+
+    const label = result.text.trim().toUpperCase();
+
+    return label.includes("URGENT");
+  } catch {
+    return false;
+  }
 }

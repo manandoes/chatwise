@@ -21,6 +21,11 @@ export const RECURRING_JOBS: Recurring[] = [
   { jobType: "sheets.scheduled_exports", everyMs: 15 * MINUTE },
   { jobType: "tags.evaluate_all_rules", everyMs: 24 * 60 * MINUTE },
   { jobType: "templates.sync_all", everyMs: 6 * 60 * MINUTE },
+  // Follow-up nudges and feedback requests fire per-business on a cadence set
+  // by their owner's setup answers, so they live here rather than in the agent
+  // folders (docs/Rules.md §2).
+  { jobType: "followup.check", everyMs: 10 * MINUTE },
+  { jobType: "feedback.send", everyMs: 15 * MINUTE },
 ];
 
 export async function enqueueRecurringJobs(now = Date.now()): Promise<void> {

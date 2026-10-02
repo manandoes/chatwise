@@ -38,7 +38,16 @@ const NOTICE_IN_WORDS: Record<string, string> = {
   "48h": "At least two days",
 };
 
-export function appointmentSystemPrompt(request: BotRequest): string {
+/** What the Calendly connection looks like, when present. */
+export type CalendlyInfo =
+  | { connected: false }
+  | { connected: true; bookingUrl: string }
+  | { connected: true; bookingUrl: string; nextSlots: string[] };
+
+export function appointmentSystemPrompt(
+  request: BotRequest,
+  calendlyInfo: CalendlyInfo = { connected: false },
+): string {
   const { business, agent, knowledge } = request;
   const businessName = business.name?.trim() || "this business";
 
@@ -49,7 +58,7 @@ export function appointmentSystemPrompt(request: BotRequest): string {
       NOTICE_IN_WORDS[config.noticeRequired] ?? config.noticeRequired;
   }
 
-  return [
+  const lines: string[] = [
     `You are taking booking enquiries for ${businessName} on WhatsApp.`,
     "",
     "Your job is to tell people what they can book, when bookings are taken and on what terms — and to write down what they are asking for so a person can confirm it.",
@@ -88,5 +97,32 @@ export function appointmentSystemPrompt(request: BotRequest): string {
     "- If they want to change or cancel something they have already booked, you cannot see it. Hand over straight away.",
     "- Once you have the request, hand over so a person can confirm the time.",
     "- Anything about price, or about what is possible, comes only from the details above.",
-  ].join("\n");
+  ];
+
+  // Calendar section — added after the rules so it stands out.
+  if ("nextSlots" in calendlyInfo && calendlyInfo.nextSlots.length > 0) {
+    lines.push(
+      "",
+      "THE CALENDAR (live from Calendly)",
+      "",
+      `Here are some upcoming slots the system found, so you know roughly when the business is free: ${calendlyInfo.nextSlots.join(", ")}.`,
+      "These are suggestions only — never tell a customer any of these is guaranteed. A person must confirm.",
+    );
+  } else if (calendlyInfo.connected) {
+    lines.push(
+      "",
+      "THE CALENDAR (connected but no slots could be checked right now)",
+      "",
+      `The business has a Calendly link: ${calendlyInfo.bookingUrl}. You cannot check live availability through it — ask the customer to book there, or hand over.`,
+    );
+  } else {
+    lines.push(
+      "",
+      "THE CALENDAR (not connected)",
+      "",
+      "There is no calendar connected. Never guess at availability.",
+    );
+  }
+
+  return lines.join("\n");
 }

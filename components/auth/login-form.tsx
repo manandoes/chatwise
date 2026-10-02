@@ -1,6 +1,8 @@
 "use client";
 
-// Logging back in.
+// Logging back in. Blocks access to the dashboard for accounts that haven't picked a
+// paid plan — the middleware only checks *that* a user is signed in; this route
+// decides whether they are entitled to proceed.
 
 import { AlertCircle } from "lucide-react";
 import { signIn } from "next-auth/react";
@@ -33,7 +35,7 @@ function messageForError(error: string): string {
     case "OAuthAccountNotLinked":
       return "That email is already registered with a password. Log in with your password instead.";
     case "AccessDenied":
-      return "That account isn't allowed to sign in.";
+      return "Your plan hasn't been activated yet. Pick a plan to continue.";
     default:
       return "Something went wrong signing you in. Please try again.";
   }

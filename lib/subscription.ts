@@ -61,6 +61,8 @@ export type AccountPlan = {
    * plan it cannot buy would just be a bug wearing a business rule's clothes.
    */
   billingIsLive: boolean;
+  /** Which add-ons are active for this account. Read from the DB row's `addons` field. */
+  addons: Record<string, unknown>;
 };
 
 /**
@@ -99,6 +101,7 @@ export async function readAccountPlan(
     periodEnd: row?.currentPeriodEnd ?? null,
     hasRazorpaySubscription: Boolean(row?.razorpaySubscriptionId),
     billingIsLive,
+    addons: (row?.addons as Record<string, unknown> | null) ?? {},
   };
 }
 
@@ -497,4 +500,12 @@ export async function readInvoices(businessId: string): Promise<InvoiceLine[]> {
     issuedAt: fromUnixSeconds(invoice.issued_at ?? invoice.created_at),
     url: invoice.short_url,
   }));
+}
+
+/** Whether a particular add-on is active on this account. */
+export function isActiveAddon(
+  addons: Record<string, unknown>,
+  id: string,
+): boolean {
+  return Boolean(addons[id]);
 }

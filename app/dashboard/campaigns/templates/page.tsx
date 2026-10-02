@@ -63,6 +63,7 @@ export default async function TemplatesPage() {
         }))}
         needsMetaApproval={capabilities.requiresApprovedTemplates}
         optOutLine={OPT_OUT_LINE}
+        isApiTier={connection.type === "API"}
       />
     </div>
   );

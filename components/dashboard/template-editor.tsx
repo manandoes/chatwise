@@ -9,7 +9,7 @@
 // customer for a Meta template name would be asking about something they do
 // not have (docs/Rules.md §7).
 
-import { AlertCircle, Check, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, Check, LoaderCircle, Plus, Send, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -59,11 +59,14 @@ export function TemplateEditor({
   templates,
   needsMetaApproval,
   optOutLine,
+  isApiTier,
 }: {
   templates: EditableTemplate[];
   /** True on the API tier, where a template is a thing registered at Meta. */
   needsMetaApproval: boolean;
   optOutLine: string;
+  /** Whether the account is on the Business API tier (allows submitting to Meta). */
+  isApiTier: boolean;
 }) {
   const router = useRouter();
 
@@ -139,6 +142,36 @@ export function TemplateEditor({
     }
   }
 
+  // Per-template state for the "Submit to Meta" button.
+  const [submittingId, setSubmittingId] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  async function requestMetaSubmission(id: string) {
+    setSubmittingId(id);
+    setSubmitError(null);
+
+    try {
+      const response = await fetch("/api/templates/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templateId: id }),
+      });
+
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        setSubmitError(payload?.error?.message ?? "Submission failed.");
+        return;
+      }
+
+      router.refresh();
+    } catch {
+      setSubmitError("We couldn't reach ChatWise. Check your connection.");
+    } finally {
+      setSubmittingId(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {templates.length > 0 && (
@@ -156,6 +189,23 @@ export function TemplateEditor({
                       {template.approvalLabel}
                     </span>
                   )}
+                  {isApiTier &&
+                    (template.approval === "NOT_SUBMITTED" || template.approval === "REJECTED") && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={submittingId === template.id}
+                        onClick={() => requestMetaSubmission(template.id)}
+                      >
+                        {submittingId === template.id ? (
+                          <LoaderCircle className="size-4 animate-spin" />
+                        ) : (
+                          <Send className="size-4" />
+                        )}
+                        Request Meta
+                      </Button>
+                    )}
                   <Button
                     type="button"
                     variant="ghost"
@@ -339,6 +389,13 @@ export function TemplateEditor({
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {submitError && (
+        <Alert variant="destructive">
+          <AlertCircle />
+          <AlertDescription>{submitError}</AlertDescription>
+        </Alert>
       )}
 
       {justSaved && (

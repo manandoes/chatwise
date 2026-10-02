@@ -15,7 +15,10 @@ export type FeatureName =
   | "googleSheets"
   | "calendly"
   | "aiInsights"
-  | "catalogSearch";
+  | "catalogSearch"
+  /// When on, the router runs a lightweight sentiment check on every inbound
+  /// text message and raises HIGH-priority threads for angry/urgent customers.
+  | "voiceMedia";
 
 const FLAG_VARIABLES: Record<FeatureName, string> = {
   shopify: "FEATURE_SHOPIFY",
@@ -24,6 +27,7 @@ const FLAG_VARIABLES: Record<FeatureName, string> = {
   calendly: "FEATURE_CALENDLY",
   aiInsights: "FEATURE_AI_INSIGHTS",
   catalogSearch: "FEATURE_CATALOG_SEARCH",
+  voiceMedia: "FEATURE_VOICE_MEDIA",
 };
 
 /** True only when the flag is literally "true" (or "1"). Unset means off. */

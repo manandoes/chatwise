@@ -15,6 +15,7 @@
     "db:studio": "prisma studio",
     "db:generate": "prisma generate",
     "postinstall": "prisma generate",
+    "seed:demo": "node --env-file-if-exists=.env scripts/seed-demo.ts",
     "whatsapp-worker": "node --env-file-if-exists=.env --conditions=react-server whatsapp-connectors/web-qr/session-manager.ts"
   },
   "dependencies": {

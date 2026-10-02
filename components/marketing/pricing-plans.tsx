@@ -1,7 +1,7 @@
 // The plans, on the public pricing page.
 //
 // Read from lib/plans.ts — the same file the dashboard, the billing screen and
-// every limit check read. Before Phase 13 this component kept its own copy of
+// every limit check reads. Before Phase 13 this component kept its own copy of
 // what each plan included, which is exactly the kind of second version of a
 // fact that goes quietly out of date. Now a plan changes in one place.
 //
@@ -19,7 +19,7 @@ import { PLANS, billingNote, formatRupees } from "@/lib/plans";
 /** The one plan given visual weight. Most businesses land here. */
 const RECOMMENDED = "SMALL_BUSINESS";
 
-export function PricingPlans() {
+export function PricingPlans({ paywall = false }: { paywall?: boolean }) {
   return (
     <div className="mx-auto grid max-w-4xl gap-6 md:grid-cols-2">
       {PLANS.map((plan) => {
@@ -68,14 +68,26 @@ export function PricingPlans() {
               ))}
             </ul>
 
-            <Button
-              asChild
-              size="lg"
-              variant={emphasised ? "default" : "outline"}
-              className="mt-7 w-full"
-            >
-              <Link href="/signup">{`Start on ${plan.name}`}</Link>
-            </Button>
+            {paywall ? (
+              <Link href={`/dashboard/billing?plan=${plan.id}`} passHref>
+                <Button
+                  size="lg"
+                  variant={emphasised ? "default" : "outline"}
+                  className="mt-7 w-full"
+                >
+                  Start on {plan.name}
+                </Button>
+              </Link>
+            ) : (
+              <Button
+                asChild
+                size="lg"
+                variant={emphasised ? "default" : "outline"}
+                className="mt-7 w-full"
+              >
+                <Link href="/signup">{`Start on ${plan.name}`}</Link>
+              </Button>
+            )}
           </div>
         );
       })}

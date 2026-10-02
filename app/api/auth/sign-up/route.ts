@@ -2,6 +2,9 @@
 //
 // (Signing in afterwards is handled by NextAuth — see lib/auth.ts. This route
 // only creates the account.)
+//
+// The account is created and signed in, then the frontend is told to go to
+// /paywall so the new user picks a plan before reaching the dashboard.
 
 import { apiError, unexpectedError } from "@/lib/api-response";
 import { callerAddress, takeFromBudget } from "@/lib/rate-limit";
@@ -79,7 +82,7 @@ export async function POST(request: Request) {
       select: { id: true, email: true, name: true },
     });
 
-    return Response.json({ user }, { status: 201 });
+    return Response.json({ user, requirePaywall: true }, { status: 201 });
   } catch (error) {
     // Two sign-ups with the same email at the same moment: the unique index on
     // the email column is what actually guarantees only one wins.

@@ -26,6 +26,54 @@ export const CALENDLY_EVENTS = ["invitee.created", "invitee.canceled"];
 
 export type CalendlyResult<T> = { ok: true; value: T } | { ok: false; message: string; status: number };
 
+/**
+ * A general-purpose call helper exported so agents and background jobs can
+ * reach Calendly without duplicating the auth logic (Gap 4 — Appointment bot).
+ */
+export async function callCalendly<T>(
+  token: string,
+  url: string,
+  init: { method?: string; body?: unknown } = {},
+): Promise<CalendlyResult<T>> {
+  let response: Response;
+
+  try {
+    response = await fetch(url.startsWith("https://") ? url : `${BASE}${url}`, {
+      method: init.method ?? "GET",
+      headers: {
+        authorization: `Bearer ${token}`,
+        ...(init.body !== undefined ? { "content-type": "application/json" } : {}),
+      },
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch {
+    return { ok: false, status: 0, message: "Calendly didn't answer. Please try again." };
+  }
+
+  if (response.status === 401) {
+    return { ok: false, status: 401, message: "Calendly didn't accept that token. Create a new personal access token and paste it again." };
+  }
+
+  const body = (await response.json().catch(() => null)) as (T & { message?: string; title?: string }) | null;
+
+  if (!response.ok) {
+    console.error(`[calendly] ${init.method ?? "GET"} ${url.replace(/[?#].*/, "").split("/").slice(0, 4).join("/")} returned ${response.status}`);
+
+    if (response.status === 403) {
+      return {
+        ok: false,
+        status: 403,
+        message: "Calendly only sends booking updates on its paid plans. Your link still works; confirmations and reminders need a paid Calendly plan.",
+      };
+    }
+
+    return { ok: false, status: response.status, message: body?.message ?? "Calendly couldn't do that right now." };
+  }
+
+  return { ok: true, value: (body ?? {}) as T };
+}
+
 async function call<T>(token: string, url: string, init: { method?: string; body?: unknown } = {}): Promise<CalendlyResult<T>> {
   let response: Response;
 

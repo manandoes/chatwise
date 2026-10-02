@@ -2,7 +2,8 @@
 
 // Creating an account. Two steps happen behind one button press: the account is
 // created, then the person is signed straight in — they shouldn't have to type
-// their password twice in a row.
+// their password twice in a row. After signing in, the user is sent to the
+// paywall to pick a plan before entering the dashboard.
 
 import { AlertCircle } from "lucide-react";
 import { signIn } from "next-auth/react";
@@ -70,6 +71,8 @@ export function SignUpForm({
         return;
       }
 
+      const data = await response.json().catch(() => null);
+
       // Account created — now sign them in with the details they just gave us.
       const result = await signIn("credentials", {
         email,
@@ -85,7 +88,9 @@ export function SignUpForm({
         return;
       }
 
-      router.push(next);
+      // New accounts always go to the paywall to pick a plan.
+      const target = data?.requirePaywall ? "/paywall" : next;
+      router.push(target);
       router.refresh();
     } catch {
       setFormError(
@@ -153,7 +158,7 @@ export function SignUpForm({
             <Separator className="flex-1" />
           </div>
 
-          <GoogleSignInButton next={next} disabled={isSubmitting} />
+          <GoogleSignInButton next="/paywall" disabled={isSubmitting} />
         </>
       )}
 

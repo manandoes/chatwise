@@ -26,6 +26,14 @@ import { processCalendlyWebhook, sendDueBookingReminders } from "../integrations
 import { isFeatureEnabled } from "../lib/features.ts";
 import { db } from "../lib/db.ts";
 import { businessesToSync, syncTemplatesFromMeta } from "../campaigns/templates/meta-sync.ts";
+import { composeFollowUpNudge } from "../bots/follow-up-bot/handler.ts";
+import { followUpSchedule } from "../bots/follow-up-bot/handler.ts";
+import { composeFeedbackRequest } from "../bots/feedback-bot/handler.ts";
+import { feedbackDelayMs } from "../bots/feedback-bot/handler.ts";
+import { connectorForConnection } from "../whatsapp-connectors/index.ts";
+import type { BotRequest, ConversationTurn } from "../bots/shared/handler-types.ts";
+import type { BotType } from "../bots/shared/config-types.ts";
+import { HISTORY_LIMIT } from "../bots/shared/prompt-shared.ts";
 
 export type JobContext = {
   id: string;
@@ -288,5 +296,286 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   "sheets.import": sheetsImportHandler,
   "calendly.webhook": calendlyWebhookHandler,
   "bookings.reminders": bookingRemindersHandler,
+  // Follow-up and feedback are clock-driven agents (docs/Phases.md Phase 12).
+  // Sending a message is not safe to repeat, but a missed nudge is only a
+  // lost opportunity — not a duplication risk — so the runner retries them.
+  "followup.check": {
+    safeToRepeat: false,
+    async run(job) {
+      if (!job.businessId) return { status: "failed", error: "No business on this job." };
+      const result = await checkFollowUpsForBusiness(job.businessId);
+      return { status: "done", note: `${result.sent} nudges sent, ${result.skipped} skipped` };
+    },
+  },
+  "feedback.send": {
+    safeToRepeat: false,
+    async run(job) {
+      if (!job.businessId) return { status: "failed", error: "No business on this job." };
+      const result = await sendFeedbackRequestsForBusiness(job.businessId);
+      return { status: "done", note: `${result.sent} requests sent, ${result.skipped} skipped` };
+    },
+  },
 };
+
+// ─── Follow-up: chase quotes that went quiet ────────────────────────────────
+
+/** One business's setup answers, fetched from the single AgentInstance. */
+async function readBotConfig(businessId: string): Promise<{
+  config: Record<string, string>;
+  botType: string;
+  tone: string | null;
+  language: string | null;
+  escalationRules: string | null;
+  escalateTo: string | null;
+  timezone: string;
+  name: string | null;
+  industry: string | null;
+  about: string | null;
+  connectionId: string;
+  connectionType: string;
+} | null> {
+  const row = await db.agentInstance.findUnique({
+    where: { businessId },
+    select: {
+      config: true,
+      botType: true,
+      tone: true,
+      language: true,
+      escalationRules: true,
+      escalateTo: true,
+      business: {
+        select: { timezone: true, name: true, industry: true, about: true, connection: { select: { id: true, type: true } } },
+      },
+    },
+  });
+
+  if (!row || !row.business.connection) return null;
+
+  const config: Record<string, string> = {};
+  if (typeof row.config === "object" && row.config !== null) {
+    for (const [k, v] of Object.entries(row.config as Record<string, unknown>)) {
+      if (typeof v === "string") config[k] = v;
+    }
+  }
+
+  return {
+    config,
+    botType: row.botType as string,
+    tone: row.tone,
+    language: row.language,
+    escalationRules: row.escalationRules,
+    escalateTo: row.escalateTo,
+    timezone: row.business.timezone,
+    name: row.business.name,
+    industry: row.business.industry,
+    about: row.business.about,
+    connectionId: row.business.connection.id,
+    connectionType: row.business.connection.type,
+  };
+}
+
+type CheckResult = { sent: number; skipped: number };
+
+async function buildBotRequest(
+  businessId: string,
+  agent: {
+    config: Record<string, string>;
+    botType: string;
+    tone: string | null;
+    language: string | null;
+    escalationRules: string | null;
+    escalateTo: string | null;
+    timezone: string;
+    name: string | null;
+    industry: string | null;
+    about: string | null;
+  },
+  conversationId: string,
+  message: string,
+): Promise<BotRequest> {
+  const history = await db.message.findMany({
+    where: { conversationId },
+    orderBy: { createdAt: "desc" },
+    take: HISTORY_LIMIT + 1,
+    select: { direction: true, body: true },
+  });
+
+  const turns: ConversationTurn[] = history.slice(1).reverse().map((m) => ({
+    who: m.direction === "INBOUND" ? ("customer" as const) : ("agent" as const),
+    text: m.body,
+  }));
+
+  return {
+    businessId,
+    business: { name: agent.name, industry: agent.industry, about: agent.about, timezone: agent.timezone },
+    agent: {
+      botType: agent.botType as BotType,
+      config: agent.config,
+      tone: agent.tone,
+      language: agent.language,
+      escalationRules: agent.escalationRules,
+      escalateTo: agent.escalateTo,
+    },
+    knowledge: [],
+    history: turns,
+    message,
+    contactName: null,
+    apiKey: null,
+  };
+}
+
+async function sendProactiveMessage(connectionId: string, connectionType: string, to: string, body: string): Promise<boolean> {
+  const connector = connectorForConnection({ type: connectionType as "QR" | "API" });
+  const result = await connector.sendText({ connectionId, to, body });
+  return result.status === "sent";
+}
+
+async function checkFollowUpsForBusiness(businessId: string): Promise<CheckResult> {
+  const agent = await readBotConfig(businessId);
+  if (!agent) return { sent: 0, skipped: 0 };
+  if (agent.botType !== "FOLLOW_UP") return { sent: 0, skipped: 0 };
+
+  const schedule = followUpSchedule(agent.config);
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - schedule.waitMs);
+
+  // Find conversations that are active (not escalated), have no recent customer reply,
+  // and have unread messages — indicating they went quiet after a quote.
+  const quietConversations = await db.conversation.findMany({
+    where: {
+      businessId,
+      escalatedAt: null,
+      lastMessageAt: { lt: cutoff },
+      unreadCount: { gt: 0 },
+    },
+    select: { id: true, contactPhone: true, contactName: true },
+    take: 20,
+  });
+
+  let sent = 0;
+  let skipped = 0;
+
+  for (const conv of quietConversations) {
+    // Count how many nudge jobs already exist for this conversation in the past wait period.
+    const existingNudges = await db.pendingJob.count({
+      where: {
+        businessId,
+        jobType: "followup.nudge",
+        payload: { path: ["conversationId"], equals: conv.id },
+      },
+    });
+
+    if (existingNudges >= schedule.maxAttempts) {
+      skipped++;
+      continue;
+    }
+
+    const request = await buildBotRequest(businessId, agent, conv.id, "");
+    // Signal that this is a proactive nudge, not a customer reply.
+    const response = await composeFollowUpNudge(request, existingNudges + 1);
+
+    if (response.kind !== "reply") {
+      skipped++;
+      continue;
+    }
+
+    const delivered = await sendProactiveMessage(agent.connectionId, agent.connectionType, conv.contactPhone, response.text);
+
+    if (delivered) {
+      // Record the nudge job for dedupe tracking.
+      await db.pendingJob.create({
+        data: {
+          businessId,
+          jobType: "followup.nudge",
+          payload: { conversationId: conv.id, attempt: existingNudges + 1 },
+          runAt: new Date(now.getTime() + schedule.waitMs),
+        },
+      });
+      sent++;
+    } else {
+      skipped++;
+    }
+  }
+
+  return { sent, skipped };
+}
+
+// ─── Feedback: ask how things went after a purchase ─────────────────────────
+
+async function sendFeedbackRequestsForBusiness(businessId: string): Promise<CheckResult> {
+  const agent = await readBotConfig(businessId);
+  if (!agent) return { sent: 0, skipped: 0 };
+  if (agent.botType !== "FEEDBACK") return { sent: 0, skipped: 0 };
+
+  const delayMs = feedbackDelayMs(agent.config);
+  const now = new Date();
+  const eligibleBefore = new Date(now.getTime() - delayMs);
+
+  // Find contacts with a fulfilled order that are old enough to receive a feedback request.
+  const eligibleContacts = await db.$queryRaw<
+    { id: string; phone: string; name: string | null }[]
+  >`
+    SELECT ct.id, ct.phone, ct.name
+    FROM contacts ct
+    WHERE ct."businessId" = ${businessId}
+      AND ct."totalSpent" > 0
+      AND ct."optInStatus" != 'OPTED_OUT'
+      AND NOT EXISTS (
+        SELECT 1 FROM "pending_jobs" j
+        WHERE j."businessId" = ${businessId}
+          AND j."jobType" = 'feedback.request'
+          AND j."payload"->>'contactId' = ct.id
+          AND j."status" IN ('PENDING', 'RUNNING')
+      )
+      AND EXISTS (
+        SELECT 1 FROM "orders" o
+        WHERE o."contactId" = ct.id
+          AND o."businessId" = ${businessId}
+          AND o."status" = 'FULFILLED'
+          AND o."placedAt" < ${eligibleBefore}
+      )
+    LIMIT 20
+  `;
+
+  let sent = 0;
+  let skipped = 0;
+
+  for (const contact of eligibleContacts) {
+    const conversation = await db.conversation.findFirst({
+      where: { businessId, contactId: contact.id, escalatedAt: null },
+      select: { id: true },
+    });
+
+    if (!conversation) {
+      skipped++;
+      continue;
+    }
+
+    const request = await buildBotRequest(businessId, agent, conversation.id, "");
+    const response = await composeFeedbackRequest(request);
+
+    if (response.kind !== "reply") {
+      skipped++;
+      continue;
+    }
+
+    const delivered = await sendProactiveMessage(agent.connectionId, agent.connectionType, contact.phone, response.text);
+
+    if (delivered) {
+      await db.pendingJob.create({
+        data: {
+          businessId,
+          jobType: "feedback.request",
+          payload: { contactId: contact.id, conversationId: conversation.id },
+          runAt: now,
+        },
+      });
+      sent++;
+    } else {
+      skipped++;
+    }
+  }
+
+  return { sent, skipped };
+}
 

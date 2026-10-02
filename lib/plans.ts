@@ -339,3 +339,60 @@ export function invoiceStatusLabel(status: string | null): string {
       return status ?? "";
   }
 }
+
+// ─── Add-ons ─────────────────────────────────────────────────────────────────
+
+/**
+ * Known add-on keys that can appear in a subscription's `addons` JSON field.
+ * Each one maps to an environment variable (lib/features.ts) that gates the
+ * feature on the server side.
+ */
+export type AddonId = "integrations" | "aiProductSearch" | "aiInsights";
+
+export const ADDON_IDS: AddonId[] = [
+  "integrations",
+  "aiProductSearch",
+  "aiInsights",
+];
+
+export const ADDON_PRICES: Record<AddonId, number> = {
+  integrations: 299,
+  aiProductSearch: 299,
+  aiInsights: 199,
+};
+
+export const ADDON_NAMES: Record<AddonId, string> = {
+  integrations: "Integrations Bundle",
+  aiProductSearch: "AI Product Search",
+  aiInsights: "AI Insights",
+};
+
+/**
+ * Whether a subscription has a particular add-on enabled.
+ *
+ * The `addons` field is JSON stored as `{ integrations: true, ... }`.
+ * We read it here so the shape is enforced in one place.
+ */
+export function hasAddon(
+  addons: Record<string, unknown> | null | undefined,
+  id: AddonId,
+): boolean {
+  if (!addons) return false;
+  return Boolean(addons[id]);
+}
+
+/**
+ * The total monthly cost — base plan plus all enabled add-ons.
+ * Returns null when there is no active plan.
+ */
+export function monthlyTotal(
+  plan: Plan,
+  addons: Record<string, unknown> | null | undefined,
+): number | null {
+  if (!isPaidPlan(plan)) return null;
+  let total = plan.monthlyPriceInRupees;
+  for (const id of ADDON_IDS) {
+    if (hasAddon(addons, id)) total += ADDON_PRICES[id];
+  }
+  return total;
+}
