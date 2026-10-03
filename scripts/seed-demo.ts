@@ -130,7 +130,7 @@ async function main() {
         create: {
           type: "QR",
           status: "CONNECTED",
-          phoneNumber: "9876543210",
+          phoneNumber: "919997589540",
           messagesReceived: 1247,
           messagesSent: 893,
           lastMessageAt: new Date(),
