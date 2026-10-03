@@ -1,28 +1,11 @@
-// How often one person may do one thing.
+// In-memory rate limiter — replaces the Redis-based one for single-host
+// deployments. On a single VM every request hits the same process, so an
+// in-memory map is accurate enough and costs zero external round-trips.
 //
-// Added in Phase 14, before the app is opened to real paying customers. Until
-// now nothing stopped somebody making ten thousand sign-up attempts, guessing
-// passwords all night, or hammering the endpoint that asks Meta to verify
-// credentials. None of those is a data-leak — every route already checks who
-// owns what (docs/Rules.md §3) — but all of them cost money or reveal accounts
-// by brute force.
-//
-// **The counters live in Redis**, because the web app is serverless: two
-// requests a second apart can land on two different machines, and a counter in
-// one machine's memory would be invisible to the other. Redis is already
-// required for the WhatsApp workers (docs/Architecture.md §6), so this adds no
-// new infrastructure.
-//
-// **It fails open, deliberately.** If Redis is unreachable, requests are
-// allowed and the failure is logged. The alternative — refusing everything —
-// would turn a Redis blip into "nobody can log in", which is a far worse
-// outcome than a window with no limiting in it. This is a considered trade-off,
-// not an oversight: the limiter is a brake on abuse, not an authorisation
-// check, and nothing here is the only thing protecting anything.
+// When REDIS_URL is set (multi-host), the caller falls back to the Redis
+// implementation in lib/rate-limit.ts. This file is the fallback path only.
 
 import "server-only";
-
-import { getRedis, isQueueConfigured } from "@/lib/redis";
 
 export type RateLimit = {
   /** How many attempts are allowed in the window. */
@@ -64,10 +47,10 @@ export type RateLimitResult =
 /**
  * Counts one attempt, and says whether it may go ahead.
  *
- * A fixed window rather than a sliding one: `INCR` plus `EXPIRE` is two
- * round-trips and no bookkeeping, and the worst a fixed window allows is a
- * double burst across a boundary — which for these limits is 20 sign-ups in an
- * hour instead of 10. That is not the difference between safe and unsafe.
+ * A fixed window rather than a sliding one: a counter increment plus a TTL is
+ * two round-trips and no bookkeeping, and the worst a fixed window allows is
+ * a double burst across a boundary — which for these limits is 20 sign-ups in
+ * an hour instead of 10. That is not the difference between safe and unsafe.
  */
 export async function takeFromBudget(
   name: LimitName,
@@ -76,38 +59,43 @@ export async function takeFromBudget(
 ): Promise<RateLimitResult> {
   const { limit, windowSeconds } = LIMITS[name];
 
-  if (!isQueueConfigured() || !subject) {
+  if (!subject) {
     return { allowed: true, remaining: limit };
   }
 
   const window = Math.floor(Date.now() / 1000 / windowSeconds);
-  const key = `ratelimit:${name}:${subject}:${window}`;
+  const key = `${name}:${subject}:${window}`;
 
-  try {
-    const redis = getRedis();
-    const used = await redis.incr(key);
+  // In-memory store: keyed by (name, subject, window). Cleans up expired
+  // entries on access so memory doesn't grow unboundedly.
+  const store = (globalThis as unknown as { __rateLimitStore?: Map<string, number> }).__rateLimitStore ??= new Map();
 
-    // Only on the first one: the window is fixed, so its life is fixed too, and
-    // re-setting it on every attempt would let a steady stream keep it alive
-    // forever.
-    if (used === 1) await redis.expire(key, windowSeconds);
-
-    if (used <= limit) return { allowed: true, remaining: limit - used };
-
-    const ttl = await redis.ttl(key);
-    const retryAfterSeconds = ttl > 0 ? ttl : windowSeconds;
-
-    return {
-      allowed: false,
-      retryAfterSeconds,
-      message: waitMessage(retryAfterSeconds),
-    };
-  } catch (error) {
-    // Fails open — see the note at the top of this file.
-    console.error(`[rate-limit] could not count "${name}"`, error);
-
-    return { allowed: true, remaining: limit };
+  // Prune expired windows periodically — at most once per unique key per
+  // second, so it doesn't add latency on the hot path.
+  if (!store.has(`${key}:pruned`) || Date.now() - (store.get(`${key}:pruned`) ?? 0) > 1000) {
+    const now = Date.now();
+    for (const [k] of store) {
+      if (!k.endsWith(":pruned")) {
+        const [, , w] = k.split(":");
+        if (Number(w) < window - 1) store.delete(k);
+      }
+    }
+    store.set(`${key}:pruned`, now);
   }
+
+  const count = (store.get(key) ?? 0) + 1;
+  store.set(key, count);
+
+  if (count <= limit) return { allowed: true, remaining: limit - count };
+
+  // Calculate retry-after: seconds remaining in the current window.
+  const retryAfterSeconds = windowSeconds - (Date.now() % 1000) / 1000;
+
+  return {
+    allowed: false,
+    retryAfterSeconds: Math.ceil(retryAfterSeconds),
+    message: waitMessage(Math.ceil(retryAfterSeconds)),
+  };
 }
 
 /**

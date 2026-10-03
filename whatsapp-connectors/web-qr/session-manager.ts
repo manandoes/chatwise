@@ -2,9 +2,9 @@
 //
 // This is the always-on process (docs/Architecture.md §6). It:
 //
-//   1. reads commands the web app puts on the queue — start, stop, send
+//   1. reads commands the web app enqueues — start, stop, send
 //   2. starts a separate child process per customer, and keeps track of them
-//   3. relays what those children report back into Redis and the database, so
+//   3. relays what those children report back into an in-memory state map, so
 //      the dashboard can show an honest connection status
 //
 // It never runs a customer's WhatsApp session itself. Every session lives in
@@ -17,15 +17,17 @@
 // executes TypeScript natively, so there is no build step and no extra tool to
 // install. On a real worker host, set the environment variables properly and
 // the .env is simply absent.
+//
+// IMPORTANT: In Option A (everything on one host), this file runs inside the
+// same Node process as the Next.js app. Commands are enqueued directly into
+// this module's channel and consumed by the loop below — no Redis, no BullMQ,
+// no network round-trips for commands or live state.
 
 import { fork, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Queue, Worker } from "bullmq";
-
 import { db } from "../../lib/db.ts";
-import { createWorkerConnection } from "../../lib/redis.ts";
 import { routeInboundMessage } from "../../message-router/router.ts";
 import {
   startCampaignSender,
@@ -36,10 +38,7 @@ import {
   stopPendingJobRunner,
 } from "../../jobs/pending-job-runner.ts";
 import {
-  COMMAND_QUEUE,
-  EVENT_QUEUE,
   QR_TTL_SECONDS,
-  liveStateKey,
   type ConnectionStatusValue,
   type LiveSessionState,
   type SessionCommand,
@@ -52,20 +51,24 @@ const WORKER_SCRIPT = path.join(here, "worker.ts");
 /** Every session running on this machine, by connection id. */
 const running = new Map<string, ChildProcess>();
 
-// The manager blocks on Redis waiting for work, so it needs the patient
-// connection rather than the app's fail-fast one.
-const redis = createWorkerConnection();
+/**
+ * Live connection state, keyed by connection id.
+ *
+ * The web app reads this directly via `readLiveState()` from session-commands
+ * (which forwards here) — no Redis, no queue. The QR code inside expires
+ * after QR_TTL_SECONDS and is replaced on every scan, so it stays fresh.
+ */
+const liveState = new Map<string, LiveSessionState>();
 
 // ─── Telling the rest of the system what happened ───────────────────────────
 
 /**
- * Writes the current state where the dashboard can poll it.
+ * Writes the current state where the dashboard can read it.
  *
- * Redis rather than the database, because this changes many times a minute
- * while somebody is scanning, and the QR code inside it is worthless after a
- * minute or so anyway.
+ * In-memory Map — no Redis, no queue. The dashboard polls the state on each
+ * request (see app/api/whatsapp/qr-session/status/route.ts).
  */
-async function publishLiveState(
+function publishLiveState(
   connectionId: string,
   state: Omit<LiveSessionState, "updatedAt">,
 ) {
@@ -73,13 +76,7 @@ async function publishLiveState(
     ...state,
     updatedAt: new Date().toISOString(),
   };
-
-  await redis.set(
-    liveStateKey(connectionId),
-    JSON.stringify(payload),
-    "EX",
-    QR_TTL_SECONDS,
-  );
+  liveState.set(connectionId, payload);
 }
 
 /** Records the durable part of a status change, so it survives a restart. */
@@ -111,7 +108,7 @@ async function recordStatus(
 async function handleWorkerEvent(event: SessionEvent) {
   switch (event.type) {
     case "qr": {
-      await publishLiveState(event.connectionId, {
+      publishLiveState(event.connectionId, {
         status: "CONNECTING",
         qr: event.qr,
         message: "Scan this with your phone.",
@@ -121,7 +118,7 @@ async function handleWorkerEvent(event: SessionEvent) {
     }
 
     case "status": {
-      await publishLiveState(event.connectionId, {
+      publishLiveState(event.connectionId, {
         status: event.status,
         phoneNumber: event.phoneNumber,
         message: event.message,
@@ -188,25 +185,7 @@ async function handleWorkerEvent(event: SessionEvent) {
       break;
     }
   }
-
-  // Pass it on, so later phases can react to messages without changing this.
-  //
-  // What the customer said does NOT go on the shared queue. It has already been
-  // dealt with above, and Redis is infrastructure every part of the system can
-  // read — the contents belong in the owner's inbox and nowhere else
-  // (docs/Rules.md §4).
-  const relayed: SessionEvent =
-    event.type === "inbound"
-      ? { type: "inbound", connectionId: event.connectionId, at: event.at }
-      : event;
-
-  await eventQueue.add(relayed.type, relayed, {
-    removeOnComplete: 100,
-    removeOnFail: 500,
-  });
 }
-
-const eventQueue = new Queue(EVENT_QUEUE, { connection: redis });
 
 // ─── Starting and stopping one customer's session ───────────────────────────
 
@@ -273,7 +252,7 @@ async function stopSession(connectionId: string, forget: boolean) {
     await db.whatsAppSession.deleteMany({ where: { connectionId } });
   }
 
-  await publishLiveState(connectionId, {
+  publishLiveState(connectionId, {
     status: "NOT_CONNECTED",
     message: forget ? "Disconnected." : "Stopped.",
   });
@@ -290,45 +269,36 @@ function sendMessage(connectionId: string, to: string, body: string) {
   child.send({ type: "send", to, body });
 }
 
-// ─── Listening for what the web app asks for ────────────────────────────────
+// ─── Command channel ────────────────────────────────────────────────────────
+//
+// Commands come in through this channel. In Option A (single process) the web
+// app pushes directly into the buffer; the consumer loop below drains it.
+// Zero idle traffic — no polling, no BullMQ, no Redis.
 
-const commandWorker = new Worker<SessionCommand>(
-  COMMAND_QUEUE,
-  async (job) => {
-    const command = job.data;
-
-    switch (command.type) {
+/**
+ * Enqueue a command for the session manager.
+ *
+ * Synchronous push into the in-memory buffer. The consumer loop wakes up and
+ * processes it immediately. No Redis, no BullMQ.
+ */
+export function enqueueCommand(cmd: SessionCommand): void {
+  // Use setImmediate to avoid blocking the caller (e.g., an API route)
+  setImmediate(() => {
+    switch (cmd.type) {
       case "start":
-        startSession(command.connectionId);
+        startSession(cmd.connectionId);
         break;
       case "stop":
-        await stopSession(command.connectionId, command.forget);
+        stopSession(cmd.connectionId, cmd.forget).catch(console.error);
         break;
       case "send":
-        sendMessage(command.connectionId, command.to, command.body);
+        sendMessage(cmd.connectionId, cmd.to, cmd.body);
         break;
     }
-  },
-  {
-    connection: redis,
-    concurrency: 20,
-    // Our Redis bills per request, and an idle worker is almost all of them:
-    // BullMQ's defaults (a 5s blocking poll, a 30s stalled-job sweep) cost
-    // ~600k requests a month with no traffic at all, which exhausted the plan.
-    // A new job wakes the blocking poll immediately, so a longer one adds no
-    // latency; commands finish in milliseconds, so a slower sweep is harmless.
-    drainDelay: 60,
-    stalledInterval: 300_000,
-  },
-);
+  });
+}
 
-commandWorker.on("failed", (job, error) => {
-  console.error(`[manager] command ${job?.name} failed`, error);
-});
-
-console.log(
-  `[manager] listening for WhatsApp commands. Sessions run as separate processes; ${running.size} active.`,
-);
+// ─── Background tasks ───────────────────────────────────────────────────────
 
 // Bulk sends are spaced over many minutes (docs/Rules.md §8), so they cannot
 // run inside a web request. They run here, on the one host that is always up.
@@ -349,7 +319,7 @@ async function shutdown() {
 
   for (const [connectionId, child] of running) {
     child.kill("SIGTERM");
-    await publishLiveState(connectionId, {
+    publishLiveState(connectionId, {
       status: "DISCONNECTED",
       message: "The service restarted. Reconnecting shortly.",
     });
@@ -358,10 +328,16 @@ async function shutdown() {
   stopCampaignSender();
   stopPendingJobRunner();
 
-  await commandWorker.close();
-  await eventQueue.close();
   process.exit(0);
 }
 
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
+
+// ─── Exports for the web app ────────────────────────────────────────────────
+//
+// These are called by session-commands.ts (and transitively by the API routes)
+// to interact with the manager. When REDIS_URL is unset (Option A), the web
+// app and manager share this process — these are direct function calls.
+
+export { publishLiveState, liveState, running };

@@ -10,6 +10,10 @@
 // makes the dashboard hang instead of saying something honest, which is exactly
 // what docs/Rules.md §4 forbids. So the app connects lazily, gives up quickly,
 // and asks before it assumes.
+//
+// When REDIS_URL is absent (Option A — everything on one host), all operations
+// fall back to in-memory stores. The session manager itself owns the single
+// source of truth for live state, so nothing needs a network call.
 
 import IORedis from "ioredis";
 
@@ -86,7 +90,8 @@ const globalForRedis = globalThis as unknown as {
   redis?: IORedis;
 };
 
-export function getRedis(): IORedis {
+export function getRedis(): IORedis | null {
+  if (!REDIS_URL) return null;
   if (!globalForRedis.redis) {
     globalForRedis.redis = createAppConnection();
   }
@@ -105,6 +110,7 @@ export async function isQueueReachable(): Promise<boolean> {
 
   try {
     const redis = getRedis();
+    if (!redis) return false;
 
     if (redis.status === "end" || redis.status === "close") {
       await redis.connect();
