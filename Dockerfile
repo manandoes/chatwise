@@ -51,9 +51,18 @@ RUN groupadd --system worker \
     && chown -R worker:worker /app "$WHATSAPP_SESSION_PATH"
 USER worker
 
-EXPOSE 3000 8080
-
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+
+EXPOSE 3000 8080
+
+# Runs as its own user rather than root. whatsapp-web.js already launches
+# Chromium with --no-sandbox (worker.ts), which is what makes a non-root
+# container user compatible with Chromium's sandboxing in the first place.
+RUN groupadd --system worker \
+    && useradd --system --gid worker --home-dir /app worker \
+    && mkdir -p "$WHATSAPP_SESSION_PATH" \
+    && chown -R worker:worker /app "$WHATSAPP_SESSION_PATH"
+USER worker
 
 ENTRYPOINT ["/app/entrypoint.sh"]
