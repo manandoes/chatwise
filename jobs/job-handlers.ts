@@ -13,6 +13,7 @@ import type { AutomationKind } from "../lib/generated/prisma/client.ts";
 import { sendAutomatedMessage } from "../lib/automations.ts";
 import { embedProduct } from "../lib/catalog.ts";
 import { businessesWithRules, evaluateAllRules } from "../lib/tag-rules.ts";
+import { exportConversationsToDrive } from "../lib/backup-to-drive.ts";
 import {
   handleComplianceRequest,
   loadActiveShop,
@@ -313,6 +314,53 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
       if (!job.businessId) return { status: "failed", error: "No business on this job." };
       const result = await sendFeedbackRequestsForBusiness(job.businessId);
       return { status: "done", note: `${result.sent} requests sent, ${result.skipped} skipped` };
+    },
+  },
+  "data.cleanup": {
+    // Idempotent — running twice in one day simply deletes zero additional rows.
+    safeToRepeat: true,
+    async run() {
+      const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+      // For businesses that have auto-backup enabled, run the backup first.
+      // Backup failures are logged but never block deletion.
+      const businessesWithBackup = await db.business.findMany({
+        where: { autoBackupToDrive: true },
+        select: { id: true, name: true },
+      });
+
+      for (const business of businessesWithBackup) {
+        try {
+          const backup = await exportConversationsToDrive(business.id);
+
+          if (backup.ok) {
+            console.log(
+              `[cleanup] backup for "${business.name ?? business.id}": ${backup.rowsBackedUp} rows to ${backup.spreadsheetUrl}`,
+            );
+          } else {
+            console.warn(`[cleanup] backup skipped for "${business.name ?? business.id}": ${backup.error}`);
+          }
+        } catch (error) {
+          console.warn(
+            `[cleanup] backup error for "${business.name ?? business.id}":`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+      }
+
+      const [messagesDeleted, notesDeleted, conversationsDeleted] = await Promise.all([
+        db.$executeRaw`DELETE FROM "messages" WHERE "createdAt" < ${cutoff}`,
+        db.$executeRaw`DELETE FROM "conversation_notes" WHERE "createdAt" < ${cutoff}`,
+        db.$executeRaw`DELETE FROM "conversations" c WHERE NOT EXISTS (SELECT 1 FROM "messages" m WHERE m."conversationId" = c.id AND m."createdAt" >= ${cutoff})`,
+      ]);
+
+      console.log(
+        `[cleanup] messages:${messagesDeleted} notes:${notesDeleted} convs:${conversationsDeleted}`,
+      );
+      return {
+        status: "done",
+        note: `Cleaned up ${messagesDeleted + notesDeleted + conversationsDeleted} old records`,
+      };
     },
   },
 };

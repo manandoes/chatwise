@@ -26,6 +26,7 @@ export const RECURRING_JOBS: Recurring[] = [
   // folders (docs/Rules.md §2).
   { jobType: "followup.check", everyMs: 10 * MINUTE },
   { jobType: "feedback.send", everyMs: 15 * MINUTE },
+  { jobType: "data.cleanup", everyMs: 24 * 60 * MINUTE },
 ];
 
 export async function enqueueRecurringJobs(now = Date.now()): Promise<void> {

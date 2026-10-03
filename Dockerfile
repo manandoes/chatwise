@@ -36,7 +36,11 @@ COPY . .
 
 # Build the Next.js app once at image-creation time. `next start` then serves
 # from the .next output without re-compiling on every invocation.
-RUN npm run build
+# Dummy env vars allow the build to succeed even without a real database.
+# The runtime uses the real values from .env.
+RUN DATABASE_URL="postgresql://dummy:dummy@localhost/dummy" \
+    AUTH_SECRET="dummy-secret-for-build-only" \
+    npm run build
 
 # Runs as its own user rather than root. whatsapp-web.js already launches
 # Chromium with --no-sandbox (worker.ts), which is what makes a non-root

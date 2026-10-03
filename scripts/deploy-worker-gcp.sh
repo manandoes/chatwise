@@ -264,8 +264,17 @@ sudo docker rm -f chatwise-worker >/dev/null 2>&1 || true
 sudo docker run -d \
   --name chatwise-worker \
   --restart unless-stopped \
+  --log-driver json-file \
+  --log-opt max-size=50m \
+  --log-opt max-file=3 \
   --env-file "$REMOTE_DIR/worker.env" \
   chatwise-worker:latest
+
+# Install weekly WhatsApp session cache cleanup
+sudo install -m 755 scripts/cleanup-whatsapp-cache.sh "$REMOTE_DIR/scripts/cleanup-whatsapp-cache.sh"
+
+# Add to crontab if not already present
+(crontab -l 2>/dev/null | grep -v "cleanup-whatsapp-cache" ; echo "0 3 * * 0 $REMOTE_DIR/scripts/cleanup-whatsapp-cache.sh") | crontab -
 
 sleep 3
 echo "--- container status ---"

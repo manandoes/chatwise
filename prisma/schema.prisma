@@ -129,6 +129,14 @@ model Business {
   /// their own customers' numbers.
   maskContactPhone Boolean @default(false)
 
+  /// When enabled, conversations are backed up to the owner's Google Drive before
+  /// the weekly cleanup deletes data older than 7 days.
+  autoBackupToDrive Boolean @default(false)
+  /// The Drive file id for the most recent backup spreadsheet, so we append
+  /// rather than create a new file every run.
+  backupDriveFileId String?
+  lastBackupAt DateTime?
+
   agent            AgentInstance?
   connection       WhatsAppConnection?
   conversations    Conversation[]

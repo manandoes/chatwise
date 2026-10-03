@@ -132,7 +132,7 @@ export default async function IntegrationsPage({
     listPaymentAccounts(business.id),
   ]);
 
-  const [google, segments, scheduledExports, importBatches, calendly] = await Promise.all([
+  const [google, segments, scheduledExports, importBatches, calendly, businessSettings] = await Promise.all([
     db.googleConnection.findUnique({
       where: { businessId: business.id },
       select: { googleEmail: true, createdAt: true },
@@ -173,6 +173,10 @@ export default async function IntegrationsPage({
     db.calendlyConnection.findUnique({
       where: { businessId: business.id },
       select: { bookingUrl: true, webhookUri: true },
+    }),
+    db.business.findUnique({
+      where: { id: business.id },
+      select: { autoBackupToDrive: true, lastBackupAt: true },
     }),
   ]);
 
@@ -249,6 +253,7 @@ export default async function IntegrationsPage({
               errorCount: batch.errorCount,
               errors: Array.isArray(batch.errors) ? (batch.errors as { row: number; reason: string }[]) : [],
             }))}
+            business={businessSettings}
           />
         </Section>
       </div>

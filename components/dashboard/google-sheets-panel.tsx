@@ -36,6 +36,7 @@ export function GoogleSheetsPanel({
   segments,
   scheduled,
   imports,
+  business,
 }: {
   available: boolean;
   result: { tone: "good" | "bad"; text: string } | null;
@@ -43,6 +44,7 @@ export function GoogleSheetsPanel({
   segments: { id: string; name: string }[];
   scheduled: ScheduledRow[];
   imports: ImportRow[];
+  business?: { autoBackupToDrive?: boolean; lastBackupAt?: Date | null } | null;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -112,6 +114,55 @@ export function GoogleSheetsPanel({
         <Button type="button" variant="outline" onClick={disconnect} disabled={busy}>
           Disconnect
         </Button>
+      </div>
+
+      <div className="mt-4 rounded-lg border border-border bg-surface p-5">
+        <h3 className="font-medium text-text-primary mb-3">Auto-Backup to Google Drive</h3>
+        <p className="text-small text-text-secondary mb-2">
+          When enabled, conversations are exported to a Google Spreadsheet before
+          the weekly cleanup deletes them from the database. The spreadsheet is
+          owned by the connected Google account.
+        </p>
+        <p className="text-caption text-text-secondary mb-4">
+          {connection.email ?? "Google account"} is connected and ready.
+        </p>
+
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={business?.autoBackupToDrive ?? false}
+            onChange={async (e) => {
+              setBusy(true);
+              try {
+                const result = await callApi("/api/settings/drive-backup", {
+                  method: "POST",
+                  body: { enabled: e.target.checked },
+                });
+                if (!result.ok) {
+                  setBusy(false);
+                  e.target.checked = !e.target.checked; // revert
+                  setError(result.message ?? "Failed to update setting");
+                }
+              } catch {
+                setBusy(false);
+                e.target.checked = !e.target.checked; // revert
+                setError("Could not reach ChatWise.");
+              }
+            }}
+          />
+          <span className="text-small text-text-primary">
+            {business?.autoBackupToDrive ?? false ? "ON" : "OFF"}
+          </span>
+        </label>
+
+        {business?.autoBackupToDrive && (
+          <p className="mt-3 text-small text-text-secondary">
+            Last backup:{" "}
+            {business.lastBackupAt
+              ? new Date(business.lastBackupAt).toLocaleString()
+              : "never"}
+          </p>
+        )}
       </div>
 
       <ExportForm segments={segments} />

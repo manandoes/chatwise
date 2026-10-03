@@ -18,7 +18,10 @@ export type FeatureName =
   | "catalogSearch"
   /// When on, the router runs a lightweight sentiment check on every inbound
   /// text message and raises HIGH-priority threads for angry/urgent customers.
-  | "voiceMedia";
+  | "voiceMedia"
+  /// When on, owners can enable automatic conversation backups to their own
+  /// Google Drive before the 7-day cleanup deletes them.
+  | "googleDriveBackup";
 
 const FLAG_VARIABLES: Record<FeatureName, string> = {
   shopify: "FEATURE_SHOPIFY",
@@ -28,6 +31,7 @@ const FLAG_VARIABLES: Record<FeatureName, string> = {
   aiInsights: "FEATURE_AI_INSIGHTS",
   catalogSearch: "FEATURE_CATALOG_SEARCH",
   voiceMedia: "FEATURE_VOICE_MEDIA",
+  googleDriveBackup: "FEATURE_GOOGLE_DRIVE_BACKUP",
 };
 
 /** True only when the flag is literally "true" (or "1"). Unset means off. */
