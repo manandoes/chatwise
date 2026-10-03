@@ -1,3 +1,6 @@
+import type { Metadata } from "next";
+import StructuredData from "@/components/seo/structured-data";
+
 // The frame around every public page: the top bar, the content, the footer.
 
 import type { ReactNode } from "react";
@@ -5,11 +8,14 @@ import type { ReactNode } from "react";
 import { SiteFooter } from "@/components/marketing/site-footer";
 import { SiteHeader } from "@/components/marketing/site-header";
 
-export default function MarketingLayout({
-  children,
-}: {
-  children: ReactNode;
-}) {
+export const metadata: Metadata = {
+  robots: {
+    index: true,
+    follow: true,
+  },
+};
+
+export default function MarketingLayout({ children }: { children: ReactNode }) {
   return (
     <>
       <a
@@ -26,6 +32,8 @@ export default function MarketingLayout({
       </main>
 
       <SiteFooter />
+
+      <StructuredData />
     </>
   );
 }

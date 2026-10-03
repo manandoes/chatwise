@@ -47,6 +47,9 @@ RUN groupadd --system worker \
     && chown -R worker:worker /app "$WHATSAPP_SESSION_PATH"
 USER worker
 
-EXPOSE 3000
+EXPOSE 3000 8080
 
-CMD ["node", "--conditions=react-server", "whatsapp-connectors/web-qr/session-manager.ts"]
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+ENTRYPOINT ["/app/entrypoint.sh"]

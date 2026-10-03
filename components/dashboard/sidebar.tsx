@@ -61,7 +61,12 @@ export function Sidebar({
           </Button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 pb-4">
+        <nav className="scrollbar-hide flex-1 overflow-y-auto px-3 pb-4">
+          {/* Hide vertical scrollbar across browsers while keeping scroll behavior. */}
+          <style>{`
+            .scrollbar-hide::-webkit-scrollbar { display: none; }
+            .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+          `}</style>
           {NAV_GROUPS.map((group) => (
             <div key={group.heading} className="mt-5 first:mt-1">
               <h2 className="px-2 pb-2 text-label uppercase text-text-disabled">
