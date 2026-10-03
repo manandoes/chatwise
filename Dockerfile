@@ -30,7 +30,7 @@ WORKDIR /app
 # actually changes.
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
-RUN npm ci
+RUN npm ci --include=dev
 
 COPY . .
 
