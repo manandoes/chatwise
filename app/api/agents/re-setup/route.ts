@@ -14,6 +14,8 @@ import { getApiUser, refuseUnlessOwner } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getOrCreateBusiness } from "@/lib/onboarding";
 
+export const dynamic = "force-dynamic";
+
 export async function POST() {
   try {
     const user = await getApiUser();
