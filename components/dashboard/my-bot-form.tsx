@@ -7,7 +7,8 @@
 // config-schema.ts, exactly as in setup — so this screen never has to know which
 // agent it is showing.
 
-import { AlertCircle, Check, LoaderCircle } from "lucide-react";
+import { AlertCircle, Check, FileText, LoaderCircle, Upload } from "lucide-react";
+import type { ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -57,6 +58,8 @@ export function MyBotForm({
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractNote, setExtractNote] = useState<string | null>(null);
 
   function set<K extends keyof MyBotInitial>(key: K, value: MyBotInitial[K]) {
     setValues((current) => ({ ...current, [key]: value }));
@@ -69,6 +72,76 @@ export function MyBotForm({
       answers: { ...current.answers, [id]: value },
     }));
     setJustSaved(false);
+  }
+
+  async function extractFromFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) return;
+
+    setFormError(null);
+    setExtractNote(null);
+    setIsExtracting(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch("/api/agents/persona-extract", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        setFormError(data?.error?.message ?? "We couldn't read that file. Try again.");
+        setIsExtracting(false);
+        return;
+      }
+
+      const persona = (data?.persona ?? {}) as Record<string, string>;
+      const filledKeys = Object.keys(persona);
+
+      if (filledKeys.length === 0) {
+        setExtractNote("We didn't find any business details in that file. Check the document and try again.");
+        setIsExtracting(false);
+        return;
+      }
+
+      // Merge extracted values into the form — existing values are overwritten
+      // only when the model found something in the document.
+      setValues((current) => {
+        const next = { ...current, answers: { ...current.answers } };
+
+        // Top-level fields.
+        if (persona.name) next.name = persona.name;
+        if (persona.industry) next.industry = persona.industry;
+        if (persona.about) next.about = persona.about;
+        if (persona.tone) next.tone = persona.tone;
+        if (persona.language) next.language = persona.language;
+        if (persona.escalationRules) next.escalationRules = persona.escalationRules;
+        if (persona.escalateTo) next.escalateTo = persona.escalateTo;
+
+        // Question-field answers.
+        for (const [key, value] of Object.entries(persona)) {
+          if (!(key in next.answers) || !next.answers[key]) {
+            next.answers[key] = value;
+          }
+        }
+
+        return next;
+      });
+
+      setExtractNote(
+        `Found ${filledKeys.length} field${filledKeys.length === 1 ? "" : "s"} in your document — name, industry, and more. Review them below, then save.`,
+      );
+      setIsExtracting(false);
+    } catch {
+      setFormError("We couldn't reach ChatWise. Check your connection and try again.");
+      setIsExtracting(false);
+    }
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -125,6 +198,50 @@ export function MyBotForm({
           <AlertDescription>{formError}</AlertDescription>
         </Alert>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-h3">Upload a document</CardTitle>
+          <CardDescription>
+            Have a brochure, price list, or FAQ doc? Upload it and we&apos;ll
+            fill in what we can — nothing is saved until you press Save.
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent>
+          <div className="space-y-3 rounded-lg border border-dashed border-border bg-surface/50 p-5">
+            <div className="flex items-center gap-2">
+              <Upload className="size-4 text-text-secondary" />
+              <p className="text-small font-medium text-text-primary">
+                PDF document
+              </p>
+            </div>
+            <p className="text-pretty text-small leading-relaxed text-text-secondary">
+              Upload a PDF containing your business details — prices, hours,
+              about text, FAQs — and we&apos;ll pull them into the fields below.
+            </p>
+            <input
+              type="file"
+              accept=".pdf,application/pdf"
+              disabled={isExtracting || isSaving}
+              onChange={extractFromFile}
+              className="text-small text-text-secondary file:mr-4 file:rounded file:border file:border-border file:bg-surface file:px-4 file:py-2 file:text-small file:font-medium file:text-text-primary hover:file:bg-surface/80"
+            />
+            {isExtracting && (
+              <p className="flex items-center gap-2 text-small text-text-secondary">
+                <LoaderCircle className="size-4 animate-spin" />
+                Reading your document…
+              </p>
+            )}
+            {extractNote && (
+              <p className="flex items-center gap-2 text-small text-text-secondary">
+                <FileText className="size-4 shrink-0" />
+                {extractNote}
+              </p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

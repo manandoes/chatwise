@@ -21,7 +21,10 @@ export type FeatureName =
   | "voiceMedia"
   /// When on, owners can enable automatic conversation backups to their own
   /// Google Drive before the 7-day cleanup deletes them.
-  | "googleDriveBackup";
+  | "googleDriveBackup"
+  /// When on with googleDriveBackup, media files (audio, images, videos) are
+  /// also uploaded to Google Drive alongside the spreadsheet backup.
+  | "googleDriveMediaBackup";
 
 const FLAG_VARIABLES: Record<FeatureName, string> = {
   shopify: "FEATURE_SHOPIFY",
@@ -32,6 +35,7 @@ const FLAG_VARIABLES: Record<FeatureName, string> = {
   catalogSearch: "FEATURE_CATALOG_SEARCH",
   voiceMedia: "FEATURE_VOICE_MEDIA",
   googleDriveBackup: "FEATURE_GOOGLE_DRIVE_BACKUP",
+  googleDriveMediaBackup: "FEATURE_GOOGLE_DRIVE_MEDIA_BACKUP",
 };
 
 /** True only when the flag is literally "true" (or "1"). Unset means off. */

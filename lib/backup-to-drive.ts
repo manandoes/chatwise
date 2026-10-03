@@ -12,12 +12,20 @@
 import "server-only";
 
 import { db } from "../lib/db.ts";
-import { createBackupFile, appendToSheet, spreadsheetDriveUrl } from "../integrations/google/drive.ts";
+import {
+  createBackupFile,
+  appendToSheet,
+  spreadsheetDriveUrl,
+  getOrCreateBackupFolder,
+  getOrCreateConversationMediaFolder,
+  uploadMediaFile,
+  getMediaMimeInfo,
+} from "../integrations/google/drive.ts";
 import { isGoogleConfigured } from "../integrations/google/client.ts";
 import { isFeatureEnabled } from "../lib/features.ts";
 
 export type BackupResult =
-  | { ok: true; rowsBackedUp: number; spreadsheetId: string; spreadsheetUrl: string }
+  | { ok: true; rowsBackedUp: number; mediaBackedUp: number; spreadsheetId: string; spreadsheetUrl: string }
   | { ok: false; error: string };
 
 /**
@@ -42,6 +50,9 @@ export async function exportConversationsToDrive(
     return { ok: false, error: "Google Sheets is not connected. Enable backup under Integrations." };
   }
 
+  // Check if media backup is enabled
+  const mediaBackupEnabled = isFeatureEnabled("googleDriveMediaBackup");
+
   // Fetch conversations with their messages within the lookback window.
   const lookbackCutoff = new Date(Date.now() - BACKUP_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
 
@@ -65,6 +76,9 @@ export async function exportConversationsToDrive(
           author: true,
           body: true,
           createdAt: true,
+          mediaType: true,
+          mediaUrl: true,
+          mediaMimeType: true,
         },
       },
     },
@@ -72,10 +86,32 @@ export async function exportConversationsToDrive(
   });
 
   if (conversations.length === 0) {
-    return { ok: true, rowsBackedUp: 0, spreadsheetId: "", spreadsheetUrl: "" };
+    return { ok: true, rowsBackedUp: 0, mediaBackedUp: 0, spreadsheetId: "", spreadsheetUrl: "" };
+  }
+
+  // If media backup is enabled, create the main backup folder
+  let backupFolderId: string | null = null;
+  if (mediaBackupEnabled) {
+    const folderResult = await getOrCreateBackupFolder(businessId);
+    if (!folderResult.ok) {
+      console.warn(`[backup] Could not create backup folder: ${folderResult.message}`);
+    } else {
+      backupFolderId = folderResult.value.folderId;
+    }
   }
 
   // Build rows: one per message.
+  // Add media columns if media backup is enabled
+  const mediaHeader = mediaBackupEnabled
+    ? [
+        "Media Type",
+        "Media WhatsApp URL",
+        "Media MIME Type",
+        "Media Drive File ID",
+        "Media Drive Link",
+      ]
+    : [];
+
   const header = [
     "Contact Name",
     "Phone",
@@ -84,12 +120,41 @@ export async function exportConversationsToDrive(
     "Message Body",
     "Timestamp",
     "Conversation Started",
+    ...mediaHeader,
   ];
 
   const rows: (string | number)[][] = [header];
 
+  let mediaBackedUp = 0;
+
   for (const conv of conversations) {
+    // Create per-conversation media folder if media backup is enabled
+    let conversationMediaFolderId: string | null = null;
+    if (mediaBackupEnabled && backupFolderId) {
+      const mediaFolderResult = await getOrCreateConversationMediaFolder(
+        businessId,
+        backupFolderId,
+        conv.id,
+        conv.contactName,
+      );
+      if (mediaFolderResult.ok) {
+        conversationMediaFolderId = mediaFolderResult.value.folderId;
+      } else {
+        console.warn(`[backup] Could not create media folder for conversation ${conv.id}: ${mediaFolderResult.message}`);
+      }
+    }
+
     for (const msg of conv.messages) {
+      const mediaRow = mediaBackupEnabled
+        ? [
+            msg.mediaType ?? "",
+            msg.mediaUrl ?? "",
+            msg.mediaMimeType ?? "",
+            "", // Drive file ID (filled in during media backup)
+            "", // Drive link (filled in during media backup)
+          ]
+        : [];
+
       rows.push([
         conv.contactName ?? "",
         conv.contactPhone,
@@ -98,7 +163,35 @@ export async function exportConversationsToDrive(
         msg.body ?? "",
         msg.createdAt.toISOString(),
         conv.createdAt.toISOString(),
+        ...mediaRow,
       ]);
+
+      // If media backup is enabled and this message has media, upload it
+      if (mediaBackupEnabled && msg.mediaType && msg.mediaUrl && conversationMediaFolderId) {
+        try {
+          const mimeInfo = getMediaMimeInfo(msg.mediaType);
+          const fileName = `${msg.id}.${mimeInfo.extension}`;
+          const uploadResult = await uploadMediaFile(
+            businessId,
+            msg.mediaUrl,
+            fileName,
+            mimeInfo.mimeType,
+            conversationMediaFolderId,
+          );
+
+          if (uploadResult.ok) {
+            // Update the row with Drive file info (last 2 columns)
+            const rowIndex = rows.length - 1;
+            rows[rowIndex][rows[0].length - 2] = uploadResult.value.fileId;
+            rows[rowIndex][rows[0].length - 1] = uploadResult.value.webViewLink;
+            mediaBackedUp++;
+          } else {
+            console.warn(`[backup] Failed to upload media for message ${msg.id}: ${uploadResult.message}`);
+          }
+        } catch (error) {
+          console.warn(`[backup] Error uploading media for message ${msg.id}:`, error);
+        }
+      }
     }
   }
 
@@ -132,8 +225,6 @@ export async function exportConversationsToDrive(
     const headerResult = await appendToSheet(businessId, spreadsheetId, sheetName, [header]);
 
     if (!headerResult.ok) {
-      // Best effort — don't fail the whole cleanup because the header write
-      // couldn't go through.
       console.warn(`[backup] header write failed: ${headerResult.message}`);
     }
   }
@@ -146,7 +237,6 @@ export async function exportConversationsToDrive(
 
     if (!result.ok) {
       console.warn(`[backup] append failed at row ${i}: ${result.message}`);
-      // Continue with remaining chunks — partial backup is better than none.
     }
   }
 
@@ -162,5 +252,5 @@ export async function exportConversationsToDrive(
   const totalRows = rows.length - 1; // exclude header
   const url = spreadsheetDriveUrl(spreadsheetId);
 
-  return { ok: true, rowsBackedUp: totalRows, spreadsheetId, spreadsheetUrl: url };
+  return { ok: true, rowsBackedUp: totalRows, mediaBackedUp, spreadsheetId, spreadsheetUrl: url };
 }

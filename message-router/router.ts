@@ -41,6 +41,7 @@ import {
   removeOptOut,
 } from "../campaigns/opt-out.ts";
 import { isFeatureEnabled } from "../lib/features.ts";
+import { routeMessage } from "../lib/orchestrator/router.ts";
 
 /** A message that just arrived, as either connector describes it. */
 export type InboundMessage = {
@@ -212,6 +213,9 @@ async function route(
         author: "CONTACT",
         body: text,
         externalId: inbound.externalId ?? null,
+        mediaType: inbound.mediaType ?? null,
+        mediaUrl: inbound.mediaUrl ?? null,
+        mediaMimeType: null, // Will be set when we download/process
       },
     ],
     // A message we already have is skipped rather than raised: a re-delivery is
@@ -288,6 +292,60 @@ async function route(
   }
 
   const agent = business.agent;
+
+  // ── Multi-agent orchestration ──────────────────────────────────────────
+  // Read enabled agents from the agent instance (defaults to ["RECEPTIONIST"]
+  // for backward compatibility with single-agent accounts).
+  const enabledAgentsRaw = (agent.enabledAgents ?? ["RECEPTIONIST"]) as BotType[];
+  const enabledAgents = enabledAgentsRaw.length > 0 ? enabledAgentsRaw : ["RECEPTIONIST"];
+
+  // Determine which agent should handle this message via the orchestrator.
+  // The orchestrator considers conversation history, current agent, and
+  // business configuration to make the routing decision.
+  const orchestratorContext = {
+    businessId: business.id,
+    businessName: business.name,
+    industry: business.industry,
+    about: business.about,
+    timezone: business.timezone,
+    enabledAgents: enabledAgents as BotType[],
+    currentAgent: conversation.currentAgent ?? null,
+    handoffCount: conversation.handoffCount ?? 0,
+    recentHistory: await readHistory(conversation.id),
+    message: text,
+    contactName: conversation.contactName,
+    knowledge: [], // Knowledge base read later in buildRequest
+    isAiConfigured: isAiConfigured(business.geminiApiKey ? decryptStoredKey(business.geminiApiKey) : null),
+  };
+
+  const routeDecision = await routeMessage(orchestratorContext);
+  const selectedBotType = routeDecision.agent;
+
+  // If the orchestrator wants a different agent than what's configured,
+  // update the conversation to reflect the new current agent.
+  if (selectedBotType !== (conversation.currentAgent ?? null)) {
+    await db.conversation.update({
+      where: { id: conversation.id },
+      data: {
+        currentAgent: selectedBotType,
+        handoffCount: { increment: 1 },
+      },
+    });
+    conversation.currentAgent = selectedBotType;
+    conversation.handoffCount = (conversation.handoffCount ?? 0) + 1;
+  }
+
+  // Log the routing decision
+  await db.agentLog.create({
+    data: {
+      businessId: business.id,
+      conversationId: conversation.id,
+      kind: "ROUTED",
+      agent: selectedBotType,
+      note: routeDecision.reason,
+      data: { intent: routeDecision.intent, confidence: routeDecision.confidence },
+    },
+  });
 
   // Whose key this account's agents think on: its own if it has set one, and
   // the platform's if it hasn't (lib/ai-credentials.ts). Decrypted once here
@@ -433,7 +491,7 @@ async function route(
     }
   }
 
-  const handler = handlerFor(agent.botType as BotType);
+  const handler = handlerFor(selectedBotType);
 
   if (!handler) {
     // A bot type with no folder behind it. Every agent in the catalogue is
@@ -502,7 +560,7 @@ async function route(
     conversation,
     connection,
     contactPhone,
-    botType: agent.botType as BotType,
+    botType: selectedBotType,
     deliver,
   });
 

@@ -131,11 +131,14 @@ model Business {
 
   /// When enabled, conversations are backed up to the owner's Google Drive before
   /// the weekly cleanup deletes data older than 7 days.
-  autoBackupToDrive Boolean @default(false)
+  autoBackupToDrive      Boolean   @default(false)
+  /// When enabled, media files (audio, images, videos, documents) are also
+  /// uploaded to Google Drive alongside the spreadsheet backup.
+  autoBackupMediaToDrive Boolean   @default(false)
   /// The Drive file id for the most recent backup spreadsheet, so we append
   /// rather than create a new file every run.
-  backupDriveFileId String?
-  lastBackupAt DateTime?
+  backupDriveFileId      String?
+  lastBackupAt           DateTime?
 
   agent            AgentInstance?
   connection       WhatsAppConnection?
@@ -256,6 +259,13 @@ model AgentInstance {
   escalationRules String?
   /// Who the customer is handed to, in words the end customer will see.
   escalateTo      String?
+
+  // ── Multi-agent orchestration ──
+  /// Which agent types are enabled for this business.
+  /// Defaults to ["RECEPTIONIST"] so single-agent accounts keep working without migration.
+  enabledAgents Json     @default("[\"RECEPTIONIST\"]")
+  /// The agent type currently assigned as the primary responder. Backward-compat: if null, falls back to `botType`.
+  activeBotType BotType?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -478,8 +488,8 @@ model Conversation {
 
   /// Raised when the AI reads a message as angry or urgent, so the inbox can
   /// put it first. Cleared by a person.
-  priority       ConversationPriority @default(NORMAL)
-  priorityReason String?
+  priority             ConversationPriority @default(NORMAL)
+  priorityReason       String?
   /// When a human first replied after escalation — used for SLA tracking.
   /// Cleared when the thread is let go back to the agent.
   firstHumanResponseAt DateTime?
@@ -491,6 +501,11 @@ model Conversation {
   summaryUpdatedAt    DateTime?
   /// How many messages the thread had when `summary` was written.
   summaryMessageCount Int       @default(0)
+
+  /// Which agent is currently handling this thread.
+  currentAgent BotType?
+  /// How many times the thread has been passed between agents.
+  handoffCount Int      @default(0)
 
   messages         Message[]
   internalNotes    ConversationNote[]
@@ -550,6 +565,14 @@ model Message {
   /// What was actually said. Visible to the business that owns the thread and
   /// to nobody else — never written to a log (docs/Rules.md §4).
   body String @db.Text
+
+  /// Media information for non-text messages (audio, image, video, document).
+  /// Stored when the message arrives so we can back it up to Google Drive later.
+  /// The URL is a temporary WhatsApp/Meta download URL that expires.
+  mediaType     String?
+  mediaUrl      String?
+  /// MIME type of the media file (e.g., "audio/ogg", "image/jpeg").
+  mediaMimeType String?
 
   /// Which agent produced this reply, for the per-agent breakdown in Analytics.
   /// Null for anything a person or a customer wrote.
@@ -1977,4 +2000,53 @@ model Product {
   @@unique([businessId, source, externalId])
   @@index([businessId])
   @@map("products")
+}
+
+// ─── Multi-agent orchestration (2026-10-03) ──────────────────────────────────
+/// Audit trail for every orchestration decision — routing, handoff, human
+/// escalation, failure. Readable from the inbox but never shown to customers.
+model AgentLog {
+  id             String @id @default(cuid())
+  businessId     String
+  conversationId String
+
+  /// Which event this is.
+  kind AgentLogKind
+
+  /// The agent that made the decision. Null for system events.
+  agent BotType?
+
+  /// Free-text description of what happened — safe to log, never includes the
+  /// customer's actual message content (docs/Rules.md §4).
+  note String @db.Text
+
+  /// Optional structured data: confidence score, reason codes, tool result ref, etc.
+  data Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([conversationId, createdAt])
+  @@index([businessId, kind, createdAt])
+  @@map("agent_logs")
+}
+
+/// What kind of orchestration event this log entry records.
+enum AgentLogKind {
+  /// The router picked an agent to handle this message.
+  ROUTED
+  /// The active agent decided to pass the thread to another agent.
+  HANDOFF
+  /// The active agent asked for a human instead of another agent.
+  ESCALATE_TO_HUMAN
+  /// A tool or action was called (e.g. create_lead, send_message).
+  TOOL_CALL
+  /// The AI reply was generated.
+  REPLY_GENERATED
+  /// The model failed and we had a fallback.
+  FAILURE
+  /// A human took over the thread.
+  HUMAN_TAKEOVER
+  /// A human let the AI resume.
+  HUMAN_RELEASED
 }

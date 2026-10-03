@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { callApi } from "@/lib/client-api";
+import { isFeatureEnabled } from "@/lib/features";
 
 export type ScheduledRow = {
   id: string;
@@ -44,7 +45,7 @@ export function GoogleSheetsPanel({
   segments: { id: string; name: string }[];
   scheduled: ScheduledRow[];
   imports: ImportRow[];
-  business?: { autoBackupToDrive?: boolean; lastBackupAt?: Date | null } | null;
+  business?: { autoBackupToDrive?: boolean; autoBackupMediaToDrive?: boolean; lastBackupAt?: Date | null } | null;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -123,7 +124,7 @@ export function GoogleSheetsPanel({
           the weekly cleanup deletes them from the database. The spreadsheet is
           owned by the connected Google account.
         </p>
-        <p className="text-caption text-text-secondary mb-4">
+        <p className="text-small text-text-secondary mb-4">
           {connection.email ?? "Google account"} is connected and ready.
         </p>
 
@@ -162,6 +163,45 @@ export function GoogleSheetsPanel({
               ? new Date(business.lastBackupAt).toLocaleString()
               : "never"}
           </p>
+        )}
+
+        {business?.autoBackupToDrive && isFeatureEnabled("googleDriveMediaBackup") && (
+          <div className="mt-4 rounded-lg border border-border bg-surface p-5">
+            <h3 className="font-medium text-text-primary mb-3">Auto-Backup Media to Google Drive</h3>
+            <p className="text-small text-text-secondary mb-2">
+              When enabled, media files (images, audio, videos, documents) are
+              downloaded from WhatsApp and uploaded to Google Drive before the
+              weekly cleanup. The files are organized in per-conversation folders.
+            </p>
+
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={business?.autoBackupMediaToDrive ?? false}
+                onChange={async (e) => {
+                  setBusy(true);
+                  try {
+                    const result = await callApi("/api/settings/drive-media-backup", {
+                      method: "POST",
+                      body: { enabled: e.target.checked },
+                    });
+                    if (!result.ok) {
+                      setBusy(false);
+                      e.target.checked = !e.target.checked; // revert
+                      setError(result.message ?? "Failed to update setting");
+                    }
+                  } catch {
+                    setBusy(false);
+                    e.target.checked = !e.target.checked; // revert
+                    setError("Could not reach ChatWise.");
+                  }
+                }}
+              />
+              <span className="text-small text-text-primary">
+                {business?.autoBackupMediaToDrive ?? false ? "ON" : "OFF"}
+              </span>
+            </label>
+          </div>
         )}
       </div>
 
