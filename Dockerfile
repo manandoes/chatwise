@@ -33,16 +33,18 @@ RUN DATABASE_URL="postgresql://dummy:dummy@localhost/dummy" \
     AUTH_SECRET="dummy-secret-for-build-only" \
     npm run build
 
-# Create non-root user
+# Create non-root user and set permissions
 RUN groupadd --system worker \
     && useradd --system --gid worker --home-dir /app worker \
     && mkdir -p "$WHATSAPP_SESSION_PATH" \
     && chown -R worker:worker /app "$WHATSAPP_SESSION_PATH"
-USER worker
+
+# Copy and make entrypoint executable BEFORE switching user
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 3000 8080
 
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+USER worker
 
 ENTRYPOINT ["/app/entrypoint.sh"]
