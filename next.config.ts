@@ -75,7 +75,7 @@ const nextConfig: NextConfig = {
   // whatsapp-web.js drives a real Chromium browser and only ever runs on the
   // worker host, never inside the web app. Listing it here keeps the bundler
   // from trying to pull it (and Puppeteer) into a serverless build.
-  serverExternalPackages: ["whatsapp-web.js", "puppeteer", "puppeteer-core"],
+  serverExternalPackages: ["whatsapp-web.js", "puppeteer", "puppeteer-core", "pg"],
 
   // Never send the framework's version to the public.
   poweredByHeader: false,
