@@ -119,10 +119,13 @@ export async function middleware(request: NextRequest) {
   return NextResponse.next();
 }
 
-// ─── Which routes to run on ──────────────────────────────────────────────────
-
-// Match every route except the Next.js internals and static assets.
+// ─── Runtime ─────────────────────────────────────────────────────────────────
+// Run middleware on Node.js instead of edge. Edge runtime doesn't support
+// `node:util/types` which pg 8.x relies on for date/buffer handling.
+// This is safe because middleware only reads the session cookie and DB —
+// both work fine on Node.js.
 export const config = {
+  runtime: 'nodejs',
   matcher: [
     // Skip Next.js internals and all static files
     "/((?!_next|static|favicon.ico|.*\\..*).*)",
