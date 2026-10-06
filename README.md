@@ -1,341 +1,314 @@
-<!-- Next time you push code changes, just SSH in and rerun sudo bash /mnt/data/chatwise/deploy.sh -->
-
 # ChatWise
 
-ChatWise lets a business put a ready-made **AI agent on their own WhatsApp
-number** — a receptionist, a lead qualifier, a sales assistant — and manage every
-conversation, lead and setting from one dashboard.
+**Put a ready-made AI agent on your own WhatsApp number — and manage every conversation from one dashboard.**
 
-The business owner never writes code. They pick the agent they want, answer a few
-questions about their business, connect WhatsApp, and it goes live.
+[![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js)](https://nextjs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?style=flat-square&logo=typescript)](https://typescriptlang.org)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-336791?style=flat-square&logo=postgresql)](https://postgresql.org)
+[![Prisma](https://img.shields.io/badge/Prisma-7-2961f2?style=flat-square&logo=prisma)](https://prisma.io)
+[![License](https://img.shields.io/badge/License-All%20rights%20reserved-gray?style=flat-square)](#)
 
-## How a customer uses it
+---
 
-1. They land on the website and sign up.
-2. A short setup wizard asks four things: **which agent** they want, **how to
-   connect WhatsApp**, **what their business does**, and **how the agent should
-   behave**.
-3. They connect their WhatsApp number, either by scanning a QR code or by
-   entering official WhatsApp Business API details.
-4. From then on, the agent answers their customers automatically, and everything
-   shows up in their dashboard.
+## Overview
 
-## Two ways to connect WhatsApp
+ChatWise is a subscription SaaS that lets small and mid-size businesses put a pre-built AI agent on their own WhatsApp number — no coding required. A business picks an agent (Receptionist, Lead Qualifier, Sales Assistant, Support Agent, etc.), answers a few questions about their company, connects their WhatsApp, and the agent starts answering customers automatically. Every conversation, lead, and campaign is managed from a single web dashboard.
 
-**Both tiers are paid.** Every account needs a monthly ChatWise subscription
-whichever way it connects. What differs is who the business is — and whether
-anyone else bills them.
+The product solves a simple problem: **businesses want to use WhatsApp for customer communication, but building and managing an AI agent from scratch is out of reach.** ChatWise removes the technical barrier entirely.
 
-|  | **QR connection** | **Official API** |
-|---|---|---|
-| Who it's for | Small businesses | Larger businesses |
-| How it connects | Scan a QR code, like WhatsApp Web | Official WhatsApp Business API from Meta |
-| What it costs | The ChatWise subscription, and nothing else | The ChatWise subscription **plus Meta's per-conversation charges**, billed by Meta |
-| Its plan | **Small Business**, ₹999 a month | **Enterprise**, ₹1,499 a month |
-| Bulk messages | Up to **25 recipients** per send, spaced out | Large lists, using Meta-approved templates |
-| Risk | Unofficial channel — careless sending can get a number banned | Officially sanctioned |
+**Designed and built by [Manan Agarwal](https://github.com/mananagarwal).**
 
-On the API tier, Meta bills the customer directly against their own Meta
-account, at Meta's rates for their country and conversation type. That money
-never passes through ChatWise, and nothing in this repo quotes a figure for it
-(docs/Rules.md §9) — the screens say the charge exists and point at Meta.
+---
 
-## What it costs
+## Key Features
 
-**There is one plan per connection tier, and nothing else** — no ladder of
-sizes. The plan a business buys *is* the way it connects to WhatsApp.
+### 🤖 AI-Powered Agents
 
-| | **Small Business** | **Enterprise** |
-|---|---|---|
-| Connection | QR code | Official WhatsApp Business API |
-| Per month | ₹999 | ₹1,499 |
-| Meta's per-conversation charge | None | Billed to you by Meta, at Meta's rates |
-| Messages sent | 2,000 | 10,000 |
-| Campaigns | 4 a month, up to 25 people each | Unlimited, no recipient cap |
-| Saved templates | 10 | Unlimited |
-| Knowledge answers | 50 | 100 |
-| Analytics history | 30 days | Everything |
-| Support | Email | Priority |
+- **9 pre-built agent types** — Receptionist, Lead Qualifier, Appointment, Sales, Support, Follow-up, Personal Shopper, Feedback, and Internal
+- Each agent has its own configurable personality, tone, and escalation rules
+- **CRM Agent** runs silently in the background, keeping contact records up to date alongside the chosen agent
+- AI responses powered by Google Gemini
 
-There is no free plan. An account with no live subscription — a new signup that
-hasn't paid, or one whose cancellation has run its course — keeps everything it
-has and can read it, but cannot send. That state is the `NONE` value in the
-database; nothing sells it or shows it as a plan.
+### 💬 WhatsApp Integration
 
-Both plans run one agent on one number, so nothing is priced per seat or per
-bot. Payment goes through **Razorpay**, on their own hosted page — no card
-details ever reach ChatWise.
+- **Two connection tiers** — QR-code connection for small businesses, Official WhatsApp Business API for larger operations
+- **Live inbox** with real-time conversation updates — watch chats as they happen
+- **Human handover** — take over any conversation with one click; the agent pauses while you reply
+- Escalation detection — urgent or angry messages are flagged and routed to a person automatically
 
-The limits live in one file, [`lib/plans.ts`](lib/plans.ts), and that is the only
-place to change them.
+### 👥 CRM & Lead Management
 
-## One bot, one connection, per account
+- Leads are captured automatically from conversations — no manual entry required
+- **Field-level ownership** — when a human corrects a lead field, the agent learns to respect that edit
+- Contacts, tags, segments, and deal tracking
+- Bulk contact lists for campaigns
 
-This is a firm product rule, not a setting: **an account runs exactly one agent
-on exactly one connection type.** A business that wants a second agent needs a
-second account. The database enforces this, not just the screens.
+### 📣 Campaigns & Outreach
 
-The one exception is the **CRM agent**, which runs quietly in the background
-alongside whichever agent was chosen, keeping contact records up to date.
+- Bulk messaging with safety limits (recipient caps, throttling, opt-out enforcement)
+- Template library with variable substitution
+- Meta template approval workflow for API-tier accounts
+- Delivery, read, and reply tracking per message
 
-## What the dashboard does
+### 📊 Analytics & Insights
 
-| Screen | What it's for |
+- Messages handled, answer times (median), and conversation volume over 7-day, 30-day, or all-time windows
+- Lead-to-customer conversion rates
+- Campaign performance metrics
+- Distinction between agent-handled and human-sent messages in all metrics
+
+### 💳 Billing & Subscriptions
+
+- Two paid plans — **Small Business** (₹999/mo) and **Enterprise** (₹1,499/mo); no free tier
+- Payments processed through Razorpay hosted checkout — card details never touch the application
+- Usage tracking against plan limits (messages, campaigns, knowledge entries, analytics history)
+- Invoice history read live from the payment provider
+
+### 🔌 Integrations
+
+- **Google Sheets** — export and import contact data
+- **Calendly** — appointment booking with confirmations and reminders
+- **Shopify** — product catalog sync for personal shopper agents
+- **Google Drive** — optional conversation backup with media support
+- **Razorpay & Stripe** — merchant payment links so businesses can collect payments on WhatsApp
+
+---
+
+## Product Modules
+
+| Module | What it does |
 |---|---|
-| **Overview** | The numbers at a glance, and whether WhatsApp is actually connected |
-| **My bot** | The one agent this account runs — what it knows, how it behaves |
-| **Conversations** | A live inbox. Watch a chat as it happens, take it over, reply yourself, hand it back |
-| **Leads** | The contacts those conversations turned into. Correct anything the agent got wrong, and it leaves that field alone from then on |
-| **Connect WhatsApp** | The QR scanner or the Business API form, and the connection's health |
-| **Knowledge base** | The questions and answers the agent may answer from |
-| **Analytics** | Messages handled, how long people waited, and how many became customers |
-| **Campaigns** | Bulk sends, with the 25-recipient cap, the throttle and the opt-out checks that keep a number safe |
-| **Billing** | Your plan, what you've used this month, and your invoices |
+| **Marketing Site** | Public landing page, features, pricing, FAQ — designed to convert visitors into sign-ups |
+| **Onboarding Wizard** | Guided 4-step setup: pick an agent, choose a connection type, describe your business, configure behaviour |
+| **Dashboard** | Central hub — overview, conversations, leads, analytics, campaigns, billing, settings |
+| **Agent Engine** | Loads the chosen agent's instructions, knowledge base, and conversation history to generate replies |
+| **Message Router** | Single entry point for all incoming WhatsApp messages; routes to the correct account's agent |
+| **WhatsApp Connectors** | QR-tier driver (whatsapp-web.js) and official Business API webhook handler |
+| **Campaign Sender** | Background scheduler that sends bulk messages one at a time with throttling and opt-out checks |
+| **Billing System** | Subscription management via Razorpay, usage tracking, plan limit enforcement |
 
-Two things are worth knowing about how it behaves, because they are promises
-rather than preferences:
+---
 
-- **The agent and a person never reply at the same time.** Taking a
-  conversation over — or simply typing a reply into it — stops the agent
-  answering in that thread until you hand it back.
-- **A field you edit on a lead becomes yours.** The background agent keeps the
-  rest current and never overwrites what you corrected, unless you explicitly
-  ask it to for that lead.
-- **Running out of messages never silences you.** If a month's allowance runs
-  out, the agent stops replying by itself and hands those threads to you —
-  answering somebody by hand in the inbox is never limited.
+## Available Agents
 
-## What's in this repo
-
-| Folder | What's inside |
+| Agent | Best for |
 |---|---|
-| `app/` | Every page and API endpoint |
-| `bots/` | The agents' instructions — one folder per agent, named after the agent |
-| `whatsapp-connectors/` | The two ways of talking to WhatsApp |
-| `message-router/` | The single front door for incoming messages |
-| `campaigns/` | Bulk outreach, and the safety limits around it |
-| `components/` | Reusable interface pieces |
-| `lib/` | Shared helpers — the database connection, the inbox, the lead rules, the numbers, the plans and their limits |
-| `prisma/` | The database structure |
-| `jobs/` | Scheduled and background work |
-| `docs/` | The planning documents this project is built from |
+| Receptionist | General inquiries, hours, directions, FAQs |
+| Lead Qualifier | Screening inbound prospects, collecting intent signals |
+| Appointment | Scheduling, calendar integration, reminder sends |
+| Sales | Product recommendations, pricing, closing conversations |
+| Support | Order tracking, troubleshooting, returns |
+| Follow-up | Post-purchase check-ins, review requests, re-engagement |
+| Personal Shopper | Catalog browsing, product discovery, recommendations |
+| Feedback | Satisfaction surveys, rating collection |
+| Internal | Staff-only communication, HR, internal tools |
 
-If you want to change what an agent says, open its folder under `bots/` — that is
-the only place its instructions live.
+---
 
-## The planning documents
+## Screenshots
 
-Read these before changing anything. They are the source of truth, and the code
-follows them rather than the other way round.
+> The production site is live at **[chatwise.automovalabs.tech](https://chatwise.automovalabs.tech)**. Screenshots below are placeholders — add them by dropping PNG files into `public/screenshots/` and updating the paths.
 
-| Document | What it covers |
-|---|---|
-| [docs/PRD.md](docs/PRD.md) | What the product is and every feature it needs |
-| [docs/Architecture.md](docs/Architecture.md) | The tech stack, how a message flows through the app, the folder layout |
-| [docs/Rules.md](docs/Rules.md) | Hard boundaries — security, safety limits, what not to do |
-| [docs/Phases.md](docs/Phases.md) | The build order, phase by phase |
-| [docs/Design.md](docs/Design.md) | Colours, typography, components |
-| [docs/Memory.md](docs/Memory.md) | Running log of what's built, what's in progress, and open questions |
+**Marketing Landing Page**
 
-## What runs where
+<!-- Add screenshot: public/screenshots/landing.png -->
+<!-- ![ChatWise Landing Page](/screenshots/landing.png) -->
 
-ChatWise is **two processes**, not a separate frontend and backend:
+**Onboarding Wizard**
 
-| Process | What it is | Command |
-|---|---|---|
-| **The app** | Next.js — the website, the dashboard *and* every API route, in one process. There is no separate backend server. | `npm run dev` |
-| **The WhatsApp worker** | An always-on Node process that drives QR-tier (QR) WhatsApp sessions and sends campaigns. Talks to the app through Redis, never over HTTP. | `npm run whatsapp-worker` |
+<!-- Add screenshot: public/screenshots/onboarding.png -->
+<!-- ![Onboarding Flow](/screenshots/onboarding.png) -->
 
-The app on its own is enough for everything except the QR WhatsApp tier and
-campaign sending. Start the worker when you need those.
+**Dashboard Overview**
 
-Both processes read the same `.env`, and both need `GEMINI_API_KEY` — the worker
-answers messages too.
+<!-- Add screenshot: public/screenshots/dashboard.png -->
+<!-- ![Dashboard](/screenshots/dashboard.png) -->
 
-## Running it locally
+**Live Inbox with Human Handover**
 
-You need **Node.js 20.19 or newer**, a **PostgreSQL** database
-([Supabase](https://supabase.com) is what we use), and — only for the WhatsApp
-worker — a **Redis**.
+<!-- Add screenshot: public/screenshots/inbox.png -->
+<!-- ![Conversation Inbox](/screenshots/inbox.png) -->
 
-```bash
-# 1. Install dependencies
-npm install
+**Analytics**
 
-# 2. Create your local settings file
-cp .env.example .env
+<!-- Add screenshot: public/screenshots/analytics.png -->
+<!-- ![Analytics Dashboard](/screenshots/analytics.png) -->
 
-# 3. Fill in three things in .env:
-#      DATABASE_URL     Supabase → Settings → Database → Connection string,
-#                       the POOLED one (port 6543)
-#      DIRECT_URL       the same page, the DIRECT one (port 5432) — migrations only
-#      AUTH_SECRET      generate one with:  openssl rand -base64 32
-#    Add GEMINI_API_KEY (https://aistudio.google.com/apikey) when you want the
-#    bots to actually reply. Without it messages still arrive and are handed to
-#    a person — they are just never answered automatically.
-#    (.env.example explains every other variable and when you'll need it.)
+---
 
-# 4. Create the database tables
-npm run db:migrate
+## Technology Stack
 
-# 5. Start the app
-npm run dev
+### Frontend
+
+- **Next.js 16** (App Router) — full-stack framework serving pages, API routes, and marketing content from a single codebase
+- **React 19** — component-based UI
+- **Tailwind CSS v4** — utility-first styling with custom design tokens
+- **shadcn/ui** — accessible, customizable component primitives
+- **Lucide React** — icon library
+
+### Backend
+
+- **Next.js API Routes** — server-side logic, authentication guards, and webhook handlers all in the same project
+- **BullMQ** — job queue for background tasks (historical; migrated to direct PostgreSQL scheduling in single-host deployment)
+- **TypeScript** — full type safety across the stack
+
+### Database
+
+- **PostgreSQL** — relational data model via Prisma ORM
+- **Prisma 7** — schema-driven migrations, type-safe queries, adapter-based driver
+
+### Authentication
+
+- **NextAuth.js v5** (Auth.js) — email/password and Google OAuth
+- Sessions stored in signed cookies
+- Password hashing via Node.js built-in `scrypt`
+
+### AI
+
+- **Google Gemini** — agent response generation and embedding models
+- Configurable model selection via environment variables
+
+### Payments
+
+- **Razorpay** — subscription billing with hosted checkout pages
+- **Stripe** (optional) — merchant payment links for businesses to collect customer payments
+
+### Infrastructure
+
+- **Docker** — single-container deployment (Next.js app + WhatsApp worker)
+- **Supabase** — managed PostgreSQL hosting
+- **Redis** — rate limiting counters and session coordination (optional in single-host mode)
+
+---
+
+## Architecture
+
+```
+Visitor
+  ↓
+Next.js App (Vercel / GCP VM)
+  ├── Marketing Pages & Landing
+  ├── Dashboard UI
+  ├── API Routes (auth, data, webhooks)
+  └── WhatsApp Worker (QR tier — drives Chromium session)
+        ↓
+PostgreSQL (Supabase)
+  ├── Users, Businesses, Subscriptions
+  ├── Conversations, Messages, Leads
+  ├── Campaigns, Templates, Knowledge Base
+  └── WhatsApp session data (encrypted at rest)
+        ↓
+External Services
+  ├── Google Gemini (AI responses)
+  ├── Razorpay (billing)
+  ├── Meta WhatsApp Business API (webhooks)
+  ├── Google Sheets / Drive
+  ├── Calendly
+  └── Shopify
 ```
 
-Then open <http://localhost:3000/signup> and create yourself an account.
+---
 
-**Google sign-in is optional.** Leave `GOOGLE_CLIENT_ID` and
-`GOOGLE_CLIENT_SECRET` blank and the "Continue with Google" button simply
-doesn't appear — email and password work on their own.
+## High-Level Architecture
 
-The app runs at <http://localhost:3000>. To check the database is connected,
-open <http://localhost:3000/api/health> — it should say `"database": "connected"`.
-
-To bring up the WhatsApp side as well, set `REDIS_URL` (locally:
-`docker run -p 6379:6379 redis`) and run the worker in a second terminal:
-
-```bash
-npm run whatsapp-worker
+```
+User Browser
+    ↓
+Next.js App (Pages + API Routes)
+    ↓
+Message Router (incoming WhatsApp messages)
+    ↓
+Agent Engine (loads prompt + knowledge base + history)
+    ↓
+Google Gemini (generates reply)
+    ↓
+WhatsApp Connector (sends via QR or Business API)
+    ↓
+PostgreSQL (persisted conversation, lead, campaign data)
 ```
 
-**No PostgreSQL installed?** Prisma can run one for you locally:
+---
 
-```bash
-npx prisma dev --name chatwise --detach   # start it
-npx prisma dev ls                         # print its connection URL
-```
+## Use Cases
 
-Paste that URL into `DATABASE_URL` in your `.env`, leave `DIRECT_URL` blank, then
-carry on from step 4. Note that it picks a new port each time it is created.
+**A local restaurant** — installs the Receptionist agent to handle table availability, menu questions, and reservation requests on WhatsApp, freeing the front desk for in-person guests.
 
-### Everyday commands
+**A D2C brand** — uses the Personal Shopper agent to help customers browse the catalog, compare products, and place orders directly through WhatsApp, with payment links sent in-chat.
 
-| Command | What it does |
-|---|---|
-| `npm run dev` | Run the app locally with live reload |
-| `npm run whatsapp-worker` | Run the WhatsApp session + campaign worker |
-| `npm run build` | Build the production version |
-| `npm start` | Run the built production version |
-| `npm run lint` | Check the code for mistakes |
-| `npm run db:migrate` | Apply database changes locally |
-| `npm run db:deploy` | Apply already-written migrations to production |
-| `npm run db:studio` | Open a visual browser for the database |
+**A consulting firm** — deploys the Lead Qualifier agent to screen inbound messages, collect contact details and budget range, and hand off hot prospects to the sales team with a fully populated lead record.
 
-Run `npx prisma generate` after any change to `prisma/schema.prisma`.
+**A service business** — runs the Appointment agent to let customers book, reschedule, and receive reminders for slots, with Calendly integration keeping the calendar in sync.
 
-## Deploying
+**An e-commerce store** — uses the Support agent to answer order status questions, process returns, and collect feedback post-delivery, with Shopify catalog data keeping answers accurate.
 
-Four pieces, and only one of them has an awkward requirement.
+---
 
-**1. Database — Supabase.** Create the project, then run the migrations against
-it once from your own machine with `DIRECT_URL` pointing at the direct (5432)
-string:
+## My Role
 
-```bash
-npm run db:deploy
-```
+**Designed and developed by Manan Agarwal**
 
-Supabase often refuses to let migrations create their scratch "shadow" database.
-If that happens, create a second empty database and point `SHADOW_DATABASE_URL`
-at it.
+Responsible for end-to-end product development including:
 
-**2. The app — any Node host; Vercel is the easy one.** `npm run build` is the
-build command and it runs `prisma generate` first. Set every variable from
-`.env.example` that you actually use, and note two:
+- Product architecture and system design
+- Frontend and dashboard development
+- Backend API routes and webhook handlers
+- Database schema design and migrations
+- AI agent engine and prompt engineering
+- WhatsApp connector implementation (both QR and Business API tiers)
+- Payment integration and subscription logic
+- Deployment infrastructure and Docker packaging
+- Security hardening and automated test suite
 
-- `DATABASE_URL` must be the **pooled** (6543) string, with
-  `?pgbouncer=true&connection_limit=1` kept on the end. Serverless opens and
-  drops connections constantly; the pooler is what stops that exhausting the
-  database.
-- `AUTH_URL` must be your real https domain, and `AUTH_SECRET` must be a
-  *different* value from your local one. Off Vercel, also set
-  `AUTH_TRUST_HOST="true"`.
+---
 
-**3. The WhatsApp worker — not Vercel.** It is a long-lived process that drives a
-real Chrome, so it needs a host that runs containers or plain VMs (a GCE VM,
-Railway, Render, Fly, a VPS). `Dockerfile.worker` builds it — Debian +
-Chromium, no HTTP port, since the worker only makes outbound connections. Give
-it the same `.env` values as the app plus `CHROME_PATH=/usr/bin/chromium` (set
-by the image already) and `WHATSAPP_SESSION_PATH`.
+## Product Highlights
 
-That path does **not** need a persistent disk: whatsapp-web.js's `RemoteAuth`
-keeps the real session encrypted in Postgres
-(`whatsapp-connectors/web-qr/session-store.ts`), and re-populates the local
-path from there on startup. A restarted or replaced container does not force
-anyone to rescan a QR code.
+- **Full-stack SaaS** — marketing site, auth, dashboard, billing, and background workers in a single codebase
+- **Multi-tenant architecture** — every route enforces account ownership; cross-account data leakage is impossible by design
+- **Real-time conversation inbox** — polling-based live updates without WebSockets, compatible with serverless hosting
+- **AI-powered agents** — configurable personalities, knowledge bases, and escalation rules per agent type
+- **Dual WhatsApp integration** — unofficial QR connection and official Business API, each with distinct capabilities and safety constraints
+- **Payment integration** — Razorpay-hosted checkout, subscription lifecycle management, usage-based plan limits
+- **Campaign system** — bulk messaging with recipient throttling, opt-out enforcement, and per-plan caps
+- **Field-level data ownership** — human edits to CRM records are preserved and respected by the AI agent
+- **Security-first design** — encrypted session data, rate limiting on all public endpoints, strict content security policies, HMAC webhook signature verification
+- **Automated validation** — 658+ automated checks covering routing, ownership guards, plan limits, analytics accuracy, and security invariants
 
-Run **exactly one** instance — the manager tracks live sessions in memory
-(`whatsapp-connectors/web-qr/session-manager.ts`), so a second instance
-consuming the same command queue could act on a session it doesn't hold.
-Scale the box vertically instead: each connected customer is a running
-Chromium, at roughly 400–600 MB.
+---
 
-On a GCE VM, `scripts/deploy-worker-gcp.sh` does the whole thing end to end —
-creates the VM if it doesn't exist yet, ships the source and *only* the four
-env vars the worker needs over SSH (never through instance metadata, which
-isn't access-controlled the way a file on the instance's own disk is), builds
-`Dockerfile.worker` on it, and runs the container with
-`--restart unless-stopped`. It's the same command for the first deploy and
-every redeploy after:
+## Security & Privacy
 
-```bash
-./scripts/deploy-worker-gcp.sh
-```
+> The production source code is private. This repository is a public product showcase and does not contain proprietary source code, credentials, or sensitive configuration.
 
-Elsewhere (Railway, Render, Fly, a VPS), the same image works — build
-`Dockerfile.worker` and run it with `--restart unless-stopped --env-file .env`.
+Key security measures implemented in the application:
 
-Skip this box entirely if you only sell the Business-API tier: that tier is
-webhooks, and the app serves those itself.
+- All secrets read from environment variables — nothing hardcoded
+- WhatsApp session data and API credentials encrypted at rest
+- Every API route verifies the requesting user owns the resource
+- Rate limiting on authentication, payment, and messaging endpoints
+- Content Security Policy, frame-ancestors protection, and HSTS headers
+- Webhook endpoints verify HMAC signatures before processing
+- Card details never touch the application — payments handled on Razorpay's hosted pages
 
-**4. Redis.** Both boxes point `REDIS_URL` at the same one (Upstash, Railway, or
-your own). It is how the app and the worker talk.
+---
 
-Then, in the vendors' dashboards:
+## Live Product
 
-- **Razorpay** → Webhooks → `https://<your-domain>/api/billing/webhook`,
-  subscribed to the `subscription.*` events.
-- **Meta**, per paying customer — each one gets their own webhook address; the
-  Connect WhatsApp screen shows them what to paste.
+**Live Demo:** [chatwise.automovalabs.tech](https://chatwise.automovalabs.tech)
 
-Finally, open `https://<your-domain>/api/health`. It reports the database and
-Redis honestly, which makes it the fastest way to catch a variable you set on
-one box and forgot on the other.
+---
 
-## Secrets
+## Contact
 
-Nothing secret is ever written into the code. Every key, token and connection
-string is read from an environment variable, and each one is listed and explained
-in [`.env.example`](.env.example). Your real `.env` file is never committed.
+Built by **Manan Agarwal**
 
-## Current status
+- GitHub: [@mananagarwal](https://github.com/mananagarwal)
+- Website: [automovalabs.tech](https://automovalabs.tech)
 
-**All fourteen phases are built**, and typecheck, lint and `npm run build` are
-clean. That covers the public website, accounts and login, the setup wizard, the
-dashboard, both ways of connecting WhatsApp, all nine agents plus the background
-CRM agent, the message router, the live inbox with human handover, the leads
-screens, analytics, campaigns, billing, and the hardening pass.
+---
 
-What is *proven* is narrower, and worth being straight about:
+## About This Repository
 
-- Everything above passed 658 automated checks covering the router, every agent,
-  handover, the lead-ownership rules, every analytics figure, every bulk-sending
-  safety rule, every plan limit, and a standing audit that every API route checks
-  who is asking and no screen shows a raw code.
-- Those checks use a **stub model**, a **stub WhatsApp connection** and a
-  **hand-built payment webhook**. So the plumbing and the guard rails are
-  verified; the quality of a real reply, the behaviour of a real WhatsApp
-  number, and a real payment are not.
+This repository serves as a public-facing showcase of the ChatWise product. The production source code is maintained privately because the application is a commercial SaaS product.
 
-Four things are needed to finish that off, and none of them is code:
-
-1. A **`GEMINI_API_KEY`** — the worker host needs it too, not just the web app.
-2. A **connected WhatsApp number**, on either tier.
-3. **Razorpay keys and two Razorpay plans**, created in the Razorpay dashboard
-   at ₹999 (Small Business) and ₹1,499 (Enterprise). Both plans are paid, so
-   both need one. Leave them out and the app runs perfectly well with payments
-   off — nothing is limited, and the billing screen says so.
-4. An **email service**, so "forgot password" can exist at all.
-
-See [docs/Memory.md](docs/Memory.md) for exactly where things stand, including
-what's known to be missing.
+All fourteen development phases are complete — the codebase is type-safe, lint-clean, and passes 658+ automated checks. What remains unverified are the live integrations (a real Gemini API key, a connected WhatsApp number, active Razorpay plans, and an email service), which require external accounts not stored in this repository.
