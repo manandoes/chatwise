@@ -1092,7 +1092,9 @@ model Subscription {
   /// UNIQUE on both: two businesses sharing one Razorpay subscription would
   /// mean one account's payment silently entitling another's.
   razorpayCustomerId     String? @unique
-  razorpaySubscriptionId String? @unique
+  razorpaySubscriptionId  String? @unique
+  /// Razorpay order id for the current billing cycle (replaces plan-based subscriptions).
+  razorpayOrderId         String? @unique
 
   /// The paid period Razorpay is currently charging for. Usage is counted
   /// against this when it is set, and against the calendar month when it isn't.

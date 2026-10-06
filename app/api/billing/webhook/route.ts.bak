@@ -13,9 +13,10 @@
 import {
   isWebhookConfigured,
   isWebhookSignatureValid,
+  type RazorpaySubscription,
 } from "@/lib/razorpay";
 import {
-  applyOrderPaidEvent,
+  applySubscriptionEvent,
   claimBillingEvent,
 } from "@/lib/subscription";
 import { db } from "@/lib/db";
@@ -32,10 +33,7 @@ function refuse() {
 
 type WebhookBody = {
   event?: string;
-  payload?: {
-    order?: { entity?: { id?: string; status?: string } };
-    payment?: { entity?: { order_id?: string; status?: string } };
-  };
+  payload?: { subscription?: { entity?: RazorpaySubscription } };
 };
 
 export async function POST(request: Request) {
@@ -87,37 +85,37 @@ export async function POST(request: Request) {
       if (seen) return ok();
     }
 
-    // Handle order payment events — these are what trigger billing state changes
-    if (eventType === "order.paid" || eventType === "payment.successful") {
-      const orderId =
-        body.payload?.order?.entity?.id ??
-        body.payload?.payment?.entity?.order_id ??
-        null;
+    // Only subscription events change what an account may do. Payment and
+    // invoice events are Razorpay's own record-keeping, and the subscription
+    // event that follows them is what actually matters here.
+    if (!eventType.startsWith("subscription.")) return ok();
 
-      if (!orderId) {
-        console.warn(`[billing] ${eventType} arrived with no order id`);
-        return ok();
-      }
+    const entity = body.payload?.subscription?.entity;
 
-      const applied = await applyOrderPaidEvent(orderId);
+    if (!entity?.id || !entity.status) {
+      console.warn(`[billing] ${eventType} arrived with no subscription in it`);
 
-      if (!applied.applied) {
-        // Not an error: Razorpay test mode and a shared account both produce
-        // events about orders this installation has never heard of.
-        console.warn(`[billing] ignored ${eventType} — ${applied.reason}`);
-      } else {
-        console.info(
-          `[billing] ${eventType} → ${applied.status} for business ${applied.businessId}`,
-        );
-      }
+      return ok();
+    }
 
-      if (eventId) {
-        await claimBillingEvent({
-          id: eventId,
-          type: eventType,
-          businessId: applied.applied ? applied.businessId : null,
-        });
-      }
+    const applied = await applySubscriptionEvent(entity);
+
+    if (!applied.applied) {
+      // Not an error: Razorpay test mode and a shared account both produce
+      // events about subscriptions this installation has never heard of.
+      console.warn(`[billing] ignored ${eventType} — ${applied.reason}`);
+    } else {
+      console.info(
+        `[billing] ${eventType} → ${applied.status} for business ${applied.businessId}`,
+      );
+    }
+
+    if (eventId) {
+      await claimBillingEvent({
+        id: eventId,
+        type: eventType,
+        businessId: applied.applied ? applied.businessId : null,
+      });
     }
 
     return ok();

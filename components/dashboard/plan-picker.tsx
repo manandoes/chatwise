@@ -25,14 +25,13 @@ export function PlanPicker({
   /** False when payments aren't switched on, or the plan can't be bought yet. */
   canChange,
   /** Plans with no price set up at Razorpay yet — shown, but not buyable. */
-  unavailablePlanIds,
   /** True once there is a subscription, which makes every change a move. */
   hasSubscription,
 }: {
   plans: Plan[];
   currentPlanId: PlanIdValue;
   canChange: boolean;
-  unavailablePlanIds: PlanIdValue[];
+  
   hasSubscription: boolean;
 }) {
   const router = useRouter();
@@ -82,7 +81,7 @@ export function PlanPicker({
       <div className="grid gap-4 md:grid-cols-2">
         {plans.map((plan) => {
           const isCurrent = plan.id === currentPlanId;
-          const isUnavailable = unavailablePlanIds.includes(plan.id);
+          const isUnavailable = false;
           const isUpgrade = plan.monthlyPriceInRupees > currentPrice;
 
           return (

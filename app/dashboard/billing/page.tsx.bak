@@ -29,7 +29,7 @@ import {
   subscriptionStatusLabel,
   type PlanIdValue,
 } from "@/lib/plans";
-
+import { razorpayPlanId } from "@/lib/razorpay";
 import { readAccountPlan, readInvoices } from "@/lib/subscription";
 import { readUsage } from "@/lib/usage";
 
@@ -48,6 +48,9 @@ export default async function BillingPage() {
   // A plan with no Razorpay plan id set up cannot be bought, however much
   // somebody wants to. Better to say so than to show a button that fails. Every
   // plan is paid, so every one of them needs an id.
+  const unavailablePlanIds = PLANS.filter(
+    (plan) => !razorpayPlanId(plan.razorpayPlanIdEnvVar),
+  ).map((plan) => plan.id as PlanIdValue);
 
   const renewsOn = account.periodEnd ? formatDate(account.periodEnd) : null;
 
@@ -238,7 +241,7 @@ export default async function BillingPage() {
           plans={PLANS}
           currentPlanId={account.plan.id}
           canChange={account.billingIsLive}
-          
+          unavailablePlanIds={unavailablePlanIds}
           hasSubscription={account.hasRazorpaySubscription}
         />
       </section>

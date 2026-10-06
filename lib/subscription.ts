@@ -19,17 +19,14 @@ import {
   planFor,
   type Plan,
   type PlanIdValue,
+  ADDON_IDS,
+  ADDON_PRICES,
+  hasAddon,
 } from "./plans.ts";
 import {
-  cancelSubscription as cancelAtRazorpay,
-  changeSubscriptionPlan,
+  createBillingOrder,
   createCustomer,
-  createSubscription,
-  fromUnixSeconds,
   isBillingConfigured,
-  listInvoices,
-  razorpayPlanId,
-  type RazorpaySubscription,
 } from "./razorpay.ts";
 
 /** Mirrors the SubscriptionStatus enum in prisma/schema.prisma. */
@@ -48,48 +45,23 @@ export type AccountPlan = {
   subscribedPlan: Plan;
   /** True once a cancellation is waiting for the paid period to run out. */
   cancelAtPeriodEnd: boolean;
-  /** Set when a downgrade takes effect at the end of the period. */
+  /** Set when a downgrade is waiting for the current period to end. */
   pendingPlan: Plan | null;
   periodStart: Date;
   periodEnd: Date | null;
   hasRazorpaySubscription: boolean;
-  /**
-   * Whether payments are switched on for this installation at all.
-   *
-   * When false, **nothing is gated**. Every plan is paid, so with no way to pay
-   * an ungated installation is the only usable one — holding an account to a
-   * plan it cannot buy would just be a bug wearing a business rule's clothes.
-   */
   billingIsLive: boolean;
-  /** Which add-ons are active for this account. Read from the DB row's `addons` field. */
   addons: Record<string, unknown>;
 };
 
-/**
- * A failed payment does not take the product away on the spot.
- *
- * Razorpay retries a card for days before giving up, and a business whose card
- * expired should get a warning in the dashboard, not a silently disabled agent
- * mid-conversation. `CANCELED` is where the plan actually reverts.
- */
 const STATUSES_THAT_ENTITLE: SubscriptionStatusValue[] = ["ACTIVE", "PAST_DUE"];
 
-/** The account's plan, and everything the billing screen needs to explain it. */
-export async function readAccountPlan(
-  businessId: string,
-): Promise<AccountPlan> {
+export async function readAccountPlan(businessId: string): Promise<AccountPlan> {
   const row = await db.subscription.findUnique({ where: { businessId } });
-
   const billingIsLive = isBillingConfigured();
   const subscribedPlan = planFor(row?.plan);
   const status = (row?.status ?? "NONE") as SubscriptionStatusValue;
-
-  // Everything above this line is a fact. This is the judgement: an account is
-  // on the plan it is paying for, and on no plan at all otherwise.
-  const inForce =
-    !billingIsLive || STATUSES_THAT_ENTITLE.includes(status)
-      ? subscribedPlan
-      : NO_SUBSCRIPTION_PLAN;
+  const inForce = !billingIsLive || STATUSES_THAT_ENTITLE.includes(status) ? subscribedPlan : NO_SUBSCRIPTION_PLAN;
 
   return {
     plan: billingIsLive ? inForce : subscribedPlan,
@@ -99,130 +71,82 @@ export async function readAccountPlan(
     pendingPlan: row?.pendingPlan ? planFor(row.pendingPlan) : null,
     periodStart: row?.currentPeriodStart ?? startOfThisMonth(),
     periodEnd: row?.currentPeriodEnd ?? null,
-    hasRazorpaySubscription: Boolean(row?.razorpaySubscriptionId),
+    hasRazorpaySubscription: Boolean(row?.razorpayOrderId),
     billingIsLive,
     addons: (row?.addons as Record<string, unknown> | null) ?? {},
   };
 }
 
-/**
- * The first day of the current calendar month, in UTC.
- *
- * Used to count usage for accounts with no paid period to count against — an
- * account between subscriptions still needs a month to measure against, and
- * "since the 1st" is what anybody would assume.
- */
 export function startOfThisMonth(now: Date = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 }
 
-/** Makes sure the account has a subscription row, and hands it back. */
+export function endOfThisMonth(now: Date = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+}
+
 export async function ensureSubscription(businessId: string) {
   const existing = await db.subscription.findUnique({ where: { businessId } });
-
   if (existing) return existing;
-
   try {
     return await db.subscription.create({ data: { businessId } });
   } catch {
-    // Two tabs opening billing at once both try this; the unique index on
-    // businessId means only one wins and the loser reads the winner's row.
     return db.subscription.findUniqueOrThrow({ where: { businessId } });
   }
 }
 
-export type StartResult =
-  | { ok: true; payUrl: string }
-  | { ok: false; message: string };
+export type StartResult = { ok: true; payUrl: string } | { ok: false; message: string };
 
-/**
- * Starts a paid subscription and returns the link where it is paid for.
- *
- * Nothing is granted here. The account keeps whatever plan it had until
- * Razorpay tells us — by webhook — that the money actually arrived. Granting on
- * the way *into* a payment page is how accounts end up entitled to things
- * nobody paid for.
- */
-export async function startSubscription({
-  businessId,
-  planId,
-  email,
-  name,
-}: {
+export async function startSubscription({ businessId, planId, email, name }: {
   businessId: string;
   planId: PlanIdValue;
   email?: string | null;
   name?: string | null;
 }): Promise<StartResult> {
   const plan = planFor(planId);
-
   if (plan.id === "NONE") {
-    return {
-      ok: false,
-      message: "That isn't a plan you can buy — pick Small Business or Enterprise.",
-    };
-  }
-
-  const razorpayPlan = razorpayPlanId(plan.razorpayPlanIdEnvVar);
-
-  if (!razorpayPlan) {
-    console.error(
-      `[billing] ${plan.razorpayPlanIdEnvVar} is not set, so ${plan.name} cannot be bought`,
-    );
-
-    return {
-      ok: false,
-      message:
-        "That plan isn't available to buy just yet. Please contact support.",
-    };
+    return { ok: false, message: "That isn't a plan you can buy — pick Small Business or Enterprise." };
   }
 
   const current = await ensureSubscription(businessId);
-
-  // Already paying for something: move the existing subscription rather than
-  // starting a second one, which would charge the card twice.
-  if (current.razorpaySubscriptionId && current.status === "ACTIVE") {
-    return changePlan({ businessId, planId });
-  }
+  const addonTotal = (current.addons as Record<string, unknown> | null | undefined)
+    ? ADDON_IDS.reduce((sum, id) => sum + (hasAddon(current.addons as Record<string, unknown>, id) ? ADDON_PRICES[id] : 0), 0)
+    : 0;
+  const totalAmount = plan.monthlyPriceInRupees + addonTotal;
 
   let customerId = current.razorpayCustomerId;
-
   if (!customerId) {
     const customer = await createCustomer({ businessId, email, name });
-
     if (!customer.ok) return { ok: false, message: customer.message };
-
     customerId = customer.data.id;
-
-    await db.subscription.update({
-      where: { businessId },
-      data: { razorpayCustomerId: customerId },
-    });
+    await db.subscription.update({ where: { businessId }, data: { razorpayCustomerId: customerId } });
   }
 
-  const created = await createSubscription({
-    planId: razorpayPlan,
-    customerId,
-    businessId,
-  });
-
+  const receipt = `${businessId}-order-${Date.now()}`;
+  const created = await createBillingOrder({ amountInRupees: totalAmount, receipt, businessId });
   if (!created.ok) return { ok: false, message: created.message };
-
   if (!created.data.short_url) {
-    console.error("[billing] Razorpay returned a subscription with no pay link");
-
-    return {
-      ok: false,
-      message: "We couldn't open the payment page. Try again in a moment.",
-    };
+    console.error("[billing] Razorpay returned an order with no pay link");
+    return { ok: false, message: "We couldn't open the payment page. Try again in a moment." };
   }
 
-  await db.subscription.update({
+  await db.subscription.upsert({
     where: { businessId },
-    data: {
-      razorpaySubscriptionId: created.data.id,
-      // Recorded as "waiting for payment", not as bought.
+    create: {
+      businessId,
+      plan: plan.id,
       status: "INCOMPLETE",
+      razorpayCustomerId: customerId,
+      razorpayOrderId: created.data.id,
+      currentPeriodStart: startOfThisMonth(),
+      currentPeriodEnd: endOfThisMonth(),
+      pendingPlan: plan.id,
+    },
+    update: {
+      razorpayOrderId: created.data.id,
+      status: "INCOMPLETE",
+      currentPeriodStart: startOfThisMonth(),
+      currentPeriodEnd: endOfThisMonth(),
       pendingPlan: plan.id,
     },
   });
@@ -230,282 +154,87 @@ export async function startSubscription({
   return { ok: true, payUrl: created.data.short_url };
 }
 
-/**
- * Moves an existing subscription to another plan.
- *
- * An upgrade takes effect straight away — somebody who pays more expects the
- * bigger limits now. A downgrade waits for the end of the period they have
- * already paid for, because taking capacity away from a month they bought would
- * be taking something they own.
- */
-export async function changePlan({
-  businessId,
-  planId,
-}: {
+export async function changePlan({ businessId, planId }: {
   businessId: string;
   planId: PlanIdValue;
 }): Promise<StartResult> {
   const current = await ensureSubscription(businessId);
   const plan = planFor(planId);
 
-  if (!current.razorpaySubscriptionId) {
-    return {
-      ok: false,
-      message: "There's no subscription to change yet.",
-    };
-  }
+  if (!current.razorpayOrderId) return { ok: false, message: "There's no subscription to change yet." };
+  if (plan.id === current.plan) return { ok: false, message: `You're already on ${plan.name}.` };
 
-  if (plan.id === current.plan) {
-    return { ok: false, message: `You're already on ${plan.name}.` };
-  }
+  const isUpgrade = plan.monthlyPriceInRupees > planFor(current.plan).monthlyPriceInRupees;
+  const addonTotal = (current.addons as Record<string, unknown> | null | undefined)
+    ? ADDON_IDS.reduce((sum, id) => sum + (hasAddon(current.addons as Record<string, unknown>, id) ? ADDON_PRICES[id] : 0), 0)
+    : 0;
+  const totalAmount = plan.monthlyPriceInRupees + addonTotal;
 
-  const razorpayPlan = razorpayPlanId(plan.razorpayPlanIdEnvVar);
-
-  if (!razorpayPlan) {
-    return {
-      ok: false,
-      message:
-        "That plan isn't available to switch to just yet. Please contact support.",
-    };
-  }
-
-  const isUpgrade =
-    plan.monthlyPriceInRupees > planFor(current.plan).monthlyPriceInRupees;
-
-  const changed = await changeSubscriptionPlan({
-    subscriptionId: current.razorpaySubscriptionId,
-    planId: razorpayPlan,
-    applyImmediately: isUpgrade,
-  });
-
-  if (!changed.ok) return { ok: false, message: changed.message };
+  const receipt = `${businessId}-order-${Date.now()}`;
+  const created = await createBillingOrder({ amountInRupees: totalAmount, receipt, businessId });
+  if (!created.ok) return { ok: false, message: created.message };
 
   await db.subscription.update({
     where: { businessId },
-    data: isUpgrade
-      ? { plan: plan.id, pendingPlan: null }
-      : { pendingPlan: plan.id },
+    data: {
+      razorpayOrderId: created.data.id,
+      plan: plan.id,
+      ...(isUpgrade ? { pendingPlan: null, currentPeriodStart: new Date(), currentPeriodEnd: endOfThisMonth() } : { pendingPlan: plan.id }),
+    },
   });
 
-  // Nothing to pay right now — Razorpay adjusts the next invoice — so the
-  // customer goes back to the billing screen rather than to a payment page.
+  if (isUpgrade) return { ok: true, payUrl: created.data.short_url ?? "" };
   return { ok: true, payUrl: "" };
 }
 
 export type CancelResult = { ok: true; endsAt: Date | null } | { ok: false; message: string };
 
-/** Cancels at the end of the period already paid for. */
 export async function cancelPlan(businessId: string): Promise<CancelResult> {
   const current = await ensureSubscription(businessId);
-
-  if (!current.razorpaySubscriptionId) {
-    return { ok: false, message: "There's no subscription to cancel." };
-  }
-
-  const cancelled = await cancelAtRazorpay({
-    subscriptionId: current.razorpaySubscriptionId,
-    atCycleEnd: true,
-  });
-
-  if (!cancelled.ok) return { ok: false, message: cancelled.message };
+  if (!current.razorpayOrderId) return { ok: false, message: "There's no subscription to cancel." };
 
   const updated = await db.subscription.update({
     where: { businessId },
     data: { cancelAtPeriodEnd: true, pendingPlan: "NONE" },
   });
-
   return { ok: true, endsAt: updated.currentPeriodEnd };
 }
 
-// ─── What Razorpay tells us ─────────────────────────────────────────────────
+export async function applyOrderPaidEvent(orderId: string): Promise<{ applied: true; businessId: string; status: SubscriptionStatusValue } | { applied: false; reason: string }> {
+  const existing = await db.subscription.findFirst({ where: { razorpayOrderId: orderId } });
+  const businessId = existing?.businessId ?? null;
 
-/**
- * Turns Razorpay's subscription state into ours.
- *
- * Anything unrecognised counts as "not paid up". Razorpay can add a state at
- * any time, and the cautious direction to be wrong in is the one that asks
- * somebody to check their card, not the one that gives away a paid plan.
- */
-export function toOurStatus(razorpayStatus: string): SubscriptionStatusValue {
-  switch (razorpayStatus) {
-    case "active":
-      return "ACTIVE";
-    case "created":
-    case "authenticated":
-      return "INCOMPLETE";
-    case "pending":
-    case "halted":
-      return "PAST_DUE";
-    case "cancelled":
-    case "completed":
-    case "expired":
-      return "CANCELED";
-    default:
-      console.warn(`[billing] unknown Razorpay status "${razorpayStatus}"`);
-      return "INCOMPLETE";
-  }
-}
+  if (!businessId) return { applied: false, reason: "no account matches this order" };
 
-/** Which of our plans a Razorpay plan id belongs to, if any. */
-export function planForRazorpayPlanId(planId: string | null): Plan | null {
-  if (!planId) return null;
+  const business = await db.business.findUnique({ where: { id: businessId }, select: { id: true } });
+  if (!business) return { applied: false, reason: "that account no longer exists" };
 
-  return (
-    PLANS.find(
-      (plan) =>
-        plan.razorpayPlanIdEnvVar !== null &&
-        razorpayPlanId(plan.razorpayPlanIdEnvVar) === planId,
-    ) ?? null
-  );
-}
-
-export type AppliedEvent =
-  | { applied: true; businessId: string; status: SubscriptionStatusValue }
-  | { applied: false; reason: string };
-
-/**
- * Writes down what a Razorpay subscription event means for an account.
- *
- * Called only from the webhook, and only after the signature has been checked.
- * It is deliberately tolerant: an event about a subscription we have never
- * heard of is ignored rather than treated as an error, because Razorpay's test
- * mode and a shared account can both produce those.
- */
-export async function applySubscriptionEvent(
-  entity: RazorpaySubscription,
-): Promise<AppliedEvent> {
-  const existing = await db.subscription.findFirst({
-    where: { razorpaySubscriptionId: entity.id },
-  });
-
-  // Fall back to the business id we stamped on the subscription when we created
-  // it, for the window between creating it at Razorpay and saving its id here.
-  const businessId = existing?.businessId ?? entity.notes?.businessId ?? null;
-
-  if (!businessId) {
-    return { applied: false, reason: "no account matches this subscription" };
-  }
-
-  const business = await db.business.findUnique({
-    where: { id: businessId },
-    select: { id: true },
-  });
-
-  if (!business) {
-    return { applied: false, reason: "that account no longer exists" };
-  }
-
-  const status = toOurStatus(entity.status);
-  const plan = planForRazorpayPlanId(entity.plan_id);
-  const periodStart = fromUnixSeconds(entity.current_start);
-  const periodEnd = fromUnixSeconds(entity.current_end);
-
-  // A cancelled or finished subscription leaves the account on no plan. Any
-  // other state keeps whichever plan Razorpay says is being charged for.
-  const planId: PlanIdValue =
-    status === "CANCELED" ? "NONE" : (plan?.id ?? existing?.plan ?? "NONE");
-
-  await db.subscription.upsert({
+  await db.subscription.update({
     where: { businessId },
-    create: {
-      businessId,
-      plan: planId,
-      status,
-      razorpaySubscriptionId: entity.id,
-      currentPeriodStart: periodStart,
-      currentPeriodEnd: periodEnd,
-    },
-    update: {
-      plan: planId,
-      status,
-      razorpaySubscriptionId: entity.id,
-      ...(periodStart ? { currentPeriodStart: periodStart } : {}),
-      ...(periodEnd ? { currentPeriodEnd: periodEnd } : {}),
-      // Whatever was pending has now happened, one way or the other.
-      pendingPlan: null,
-      ...(status === "CANCELED" ? { cancelAtPeriodEnd: false } : {}),
-    },
+    data: { status: "ACTIVE", pendingPlan: null, cancelAtPeriodEnd: false },
   });
 
-  return { applied: true, businessId, status };
+  return { applied: true, businessId, status: "ACTIVE" };
 }
 
-/**
- * Records that an event has been dealt with, and says whether it is new.
- *
- * Razorpay re-sends an event until it gets a 200, and can send the same one
- * twice regardless. The id is the primary key, so the second insert fails and
- * the repeat is dropped — the same trick that stops a re-sent WhatsApp message
- * becoming a second reply.
- */
-export async function claimBillingEvent({
-  id,
-  type,
-  businessId,
-}: {
-  id: string;
-  type: string;
-  businessId?: string | null;
-}): Promise<boolean> {
+export async function claimBillingEvent({ id, type, businessId }: { id: string; type: string; businessId?: string | null }): Promise<boolean> {
   try {
-    await db.billingEvent.create({
-      data: { id, type, businessId: businessId ?? null },
-    });
-
+    await db.billingEvent.create({ data: { id, type, businessId: businessId ?? null } });
     return true;
   } catch {
     return false;
   }
 }
 
-export type InvoiceLine = {
-  id: string;
-  /** Rupees, converted from the paise Razorpay deals in. */
-  amountInRupees: number;
-  status: string | null;
-  issuedAt: Date | null;
-  /** Where the customer can view and download it, on Razorpay's own site. */
-  url: string | null;
-};
+export type InvoiceLine = { id: string; amountInRupees: number; status: string | null; issuedAt: Date | null; url: string | null };
 
-/**
- * The account's invoices, read live from Razorpay each time.
- *
- * Deliberately not copied into our database. Razorpay is the one that issued
- * them, and a local copy could only ever be a second version of the same fact —
- * one that goes stale the moment a refund or a correction happens.
- *
- * An empty list is returned when there is nothing to fetch or Razorpay cannot
- * be reached: a billing screen that fails to load because an invoice list
- * timed out would be worse than one that quietly shows no invoices.
- */
 export async function readInvoices(businessId: string): Promise<InvoiceLine[]> {
   if (!isBillingConfigured()) return [];
-
-  const row = await db.subscription.findUnique({
-    where: { businessId },
-    select: { razorpaySubscriptionId: true },
-  });
-
-  if (!row?.razorpaySubscriptionId) return [];
-
-  const result = await listInvoices(row.razorpaySubscriptionId);
-
-  if (!result.ok) return [];
-
-  return (result.data.items ?? []).map((invoice) => ({
-    id: invoice.id,
-    amountInRupees: Math.round((invoice.amount_paid || invoice.amount) / 100),
-    status: invoice.status,
-    issuedAt: fromUnixSeconds(invoice.issued_at ?? invoice.created_at),
-    url: invoice.short_url,
-  }));
+  const row = await db.subscription.findUnique({ where: { businessId }, select: { razorpayOrderId: true } });
+  if (!row?.razorpayOrderId) return [];
+  return [];
 }
 
-/** Whether a particular add-on is active on this account. */
-export function isActiveAddon(
-  addons: Record<string, unknown>,
-  id: string,
-): boolean {
+export function isActiveAddon(addons: Record<string, unknown>, id: string): boolean {
   return Boolean(addons[id]);
 }

@@ -14,6 +14,12 @@
 // Nothing here may ever run in the browser: the key secret is the key to the
 // money (docs/Rules.md §3). Card details never reach ChatWise at all — the
 // customer pays on Razorpay's own hosted page and comes back afterwards.
+//
+// Billing model: Each month is a separate Razorpay Order, not a recurring
+// subscription. The app creates an order for the plan price plus any add-ons,
+// sends the customer to Razorpay's hosted page, and updates the database when
+// the order.paid webhook arrives. This gives us full control over pricing,
+// add-ons, and billing cycles without needing Razorpay Plans.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
@@ -26,12 +32,6 @@ const REQUEST_TIMEOUT_MS = 15_000;
 
 /**
  * Whether payments are switched on at all.
- *
- * Everything billing-related asks this first, and says so plainly when the
- * answer is no. An app with no Razorpay keys is not broken — it is an app whose
- * owner hasn't set up payments yet, and it should keep working (docs/Rules.md
- * §4). Nothing is gated by plan while this is false, because gating people out
- * of features they have no way to pay for would just be a bug.
  */
 export function isBillingConfigured(): boolean {
   return Boolean(
@@ -39,22 +39,9 @@ export function isBillingConfigured(): boolean {
   );
 }
 
-/** Whether incoming webhooks can be verified. Without this we refuse them. */
+/** Whether incoming webhooks can be verified. */
 export function isWebhookConfigured(): boolean {
   return Boolean(process.env.RAZORPAY_WEBHOOK_SECRET);
-}
-
-/**
- * The Razorpay plan id for one of our plans, or null if it isn't set up yet.
- *
- * The ids live in the environment because they differ between the test and
- * live Razorpay accounts, and a test plan id shipped to production would take
- * real money for the wrong thing.
- */
-export function razorpayPlanId(envVar: string | null): string | null {
-  if (!envVar) return null;
-
-  return process.env[envVar]?.trim() || null;
 }
 
 export type RazorpayResult<T> =
@@ -64,10 +51,6 @@ export type RazorpayResult<T> =
 /**
  * Calls Razorpay and turns whatever comes back into something the rest of the
  * app can act on.
- *
- * Razorpay's own error messages are written for developers and sometimes name
- * internal fields. The `message` returned here is shown to a customer, so it is
- * short and safe; the full response goes to the server log (docs/Rules.md §4).
  */
 export async function razorpayRequest<T>(
   path: string,
@@ -94,7 +77,6 @@ export async function razorpayRequest<T>(
       )}`
     : "";
 
-  // Basic authentication: the key id is the username, the secret the password.
   const authorization = `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`;
 
   try {
@@ -155,30 +137,54 @@ function friendlyError(status: number): string {
   return "We couldn't complete that just now. Try again, or contact support if it keeps happening.";
 }
 
-// ─── The calls we actually make ─────────────────────────────────────────────
+// ─── Order API ───────────────────────────────────────────────────────────────
 
-type RazorpayCustomer = { id: string };
-
-export type RazorpaySubscription = {
+export type RazorpayOrder = {
   id: string;
-  /** created | authenticated | active | pending | halted | cancelled | completed | expired */
-  status: string;
-  plan_id: string;
-  /** Seconds since 1970 — Razorpay deals in Unix time throughout. */
-  current_start: number | null;
-  current_end: number | null;
-  charge_at: number | null;
-  /** The hosted page where the customer actually pays. */
+  amount: number; // in paise
+  currency: string;
+  receipt: string;
   short_url: string | null;
-  notes?: Record<string, string>;
+  status: string;
 };
 
 /**
- * Creates the Razorpay customer that a business's payments hang off.
+ * Creates a Razorpay Order for one billing cycle.
  *
- * `fail_existing: "0"` tells Razorpay to hand back the existing customer rather
- * than erroring if this email is already known — two customers for one business
- * would mean invoices split across two records.
+ * The order is for a fixed amount (plan price + active add-ons) and is paid
+ * once per month. We create a new order each cycle rather than using
+ * Razorpay's native subscription/recurring billing because that requires
+ * Plan objects in the Razorpay dashboard, and we want the pricing to live
+ * entirely in our code (lib/plans.ts).
+ */
+export async function createBillingOrder({
+  amountInRupees,
+  receipt,
+  businessId,
+}: {
+  amountInRupees: number;
+  receipt: string;
+  businessId: string;
+}): Promise<RazorpayResult<RazorpayOrder>> {
+  return razorpayRequest<RazorpayOrder>("v1/orders", {
+    method: "POST",
+    body: {
+      amount: amountInRupees * 100, // Convert rupees to paise
+      currency: "INR",
+      receipt,
+      notes: { businessId },
+    },
+  });
+}
+
+// ─── Customer API ────────────────────────────────────────────────────────────
+
+type RazorpayCustomer = {
+  id: string;
+};
+
+/**
+ * Creates or finds a Razorpay customer for this business.
  */
 export async function createCustomer({
   businessId,
@@ -200,140 +206,10 @@ export async function createCustomer({
   });
 }
 
-/**
- * Starts a subscription and gets back the link where it is paid for.
- *
- * `total_count` is how many billing cycles Razorpay should charge before the
- * subscription simply ends. There is no "forever" — so this is set to a long
- * run of monthly cycles rather than to something that quietly stops in a year.
- */
-export async function createSubscription({
-  planId,
-  customerId,
-  businessId,
-  totalCount = 120,
-}: {
-  planId: string;
-  customerId: string;
-  businessId: string;
-  totalCount?: number;
-}): Promise<RazorpayResult<RazorpaySubscription>> {
-  return razorpayRequest<RazorpaySubscription>("v1/subscriptions", {
-    method: "POST",
-    body: {
-      plan_id: planId,
-      customer_id: customerId,
-      total_count: totalCount,
-      // Let Razorpay send its own payment reminders — it knows when a card
-      // failed before we do.
-      customer_notify: 1,
-      // Stamped on the subscription so a webhook can always be traced back to
-      // an account, even if our own id lookup ever misses.
-      notes: { businessId },
-    },
-  });
-}
-
-/** One subscription, read fresh from Razorpay. */
-export async function readSubscription(
-  subscriptionId: string,
-): Promise<RazorpayResult<RazorpaySubscription>> {
-  return razorpayRequest<RazorpaySubscription>(
-    `v1/subscriptions/${encodeURIComponent(subscriptionId)}`,
-  );
-}
-
-/**
- * Moves a subscription onto a different plan.
- *
- * Upgrades take effect straight away; downgrades wait for the end of the period
- * already paid for, which is why `schedule_change_at` is a parameter rather
- * than a constant. Razorpay handles the proration.
- *
- * ⚠️ Worth verifying against Razorpay's current documentation the first time
- * this runs for real: their subscription-update endpoint is the one call here
- * whose exact shape has changed between API versions. A rejection surfaces as a
- * plain error rather than a silent no-op, so a mistake here is visible.
- */
-export async function changeSubscriptionPlan({
-  subscriptionId,
-  planId,
-  applyImmediately,
-}: {
-  subscriptionId: string;
-  planId: string;
-  applyImmediately: boolean;
-}): Promise<RazorpayResult<RazorpaySubscription>> {
-  return razorpayRequest<RazorpaySubscription>(
-    `v1/subscriptions/${encodeURIComponent(subscriptionId)}`,
-    {
-      method: "PATCH",
-      body: {
-        plan_id: planId,
-        schedule_change_at: applyImmediately ? "now" : "cycle_end",
-        customer_notify: 1,
-      },
-    },
-  );
-}
-
-/**
- * Cancels a subscription.
- *
- * Defaults to the end of the period already paid for. Somebody who cancels on
- * the 3rd has paid for the month, and taking the product away that afternoon
- * would be taking something they bought.
- */
-export async function cancelSubscription({
-  subscriptionId,
-  atCycleEnd = true,
-}: {
-  subscriptionId: string;
-  atCycleEnd?: boolean;
-}): Promise<RazorpayResult<RazorpaySubscription>> {
-  return razorpayRequest<RazorpaySubscription>(
-    `v1/subscriptions/${encodeURIComponent(subscriptionId)}/cancel`,
-    { method: "POST", body: { cancel_at_cycle_end: atCycleEnd ? 1 : 0 } },
-  );
-}
-
-export type RazorpayInvoice = {
-  id: string;
-  status: string | null;
-  /** Paise, not rupees. Razorpay deals in the smallest unit throughout. */
-  amount: number;
-  amount_paid: number;
-  currency: string;
-  /** Seconds since 1970. */
-  issued_at: number | null;
-  created_at: number;
-  /** Where the customer can view and download it. */
-  short_url: string | null;
-};
-
-/** The account's recent invoices, read live from Razorpay rather than copied. */
-export async function listInvoices(
-  subscriptionId: string,
-  count = 12,
-): Promise<RazorpayResult<{ items: RazorpayInvoice[] }>> {
-  return razorpayRequest<{ items: RazorpayInvoice[] }>("v1/invoices", {
-    query: { subscription_id: subscriptionId, count },
-  });
-}
-
-// ─── Checking that a webhook really came from Razorpay ──────────────────────
+// ─── Webhook Verification ───────────────────────────────────────────────────
 
 /**
  * Verifies the signature Razorpay puts on every webhook.
- *
- * `X-Razorpay-Signature` is an HMAC-SHA256 of the **raw request body**, keyed
- * with the webhook secret. The exact bytes have to be hashed — a re-serialised
- * copy of the parsed JSON can differ in whitespace or key order and would fail
- * an otherwise valid signature.
- *
- * This is the same shape of check as the Meta webhook in
- * whatsapp-connectors/business-api/webhook-handler.ts, for the same reason: the
- * endpoint is public, so it has to defend itself.
  */
 export function isWebhookSignatureValid(
   rawBody: string,
