@@ -1,15 +1,12 @@
-# ChatWise — Full deployment on GCP (Option A)
-#
-# Everything runs here: Next.js app + WhatsApp worker in a single container.
-# No Redis, no BullMQ, no Vercel. Zero idle traffic, zero cross-host latency.
 
+# ChatWise — GCP deployment
 FROM node:24-bookworm-slim
 
 # Chromium for whatsapp-web.js
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      chromium \
-      ca-certificates \
-      fonts-liberation \
+    chromium \
+    ca-certificates \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production \
@@ -20,31 +17,29 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
-# Create the worker user once (separate RUN layers for unambiguous failures).
-RUN addgroup --system worker 2>/dev/null || true
-RUN adduser --system --ingroup worker --home /app worker 2>/dev/null || true
+# Create worker user
+RUN addgroup --system worker && \
+    adduser --system --ingroup worker --home /app worker
 
-# Install all dependencies (skip lifecycle scripts to avoid premature prisma generate).
+# Install dependencies from the lockfile
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
-RUN npm install --ignore-scripts
+RUN npm ci --include=dev --ignore-scripts
 
-# Source code
+# Copy application source
 COPY . .
 
-# Build with dummy env vars (runtime uses real values from .env).
-# prisma generate runs explicitly here with proper env, then next build.
+# Generate Prisma client and build Next.js
 RUN DATABASE_URL="postgresql://dummy:dummy@localhost/dummy" \
     AUTH_SECRET="dummy-secret-for-build-only" \
     npx prisma generate && npm run build
 
-# Set up permissions before switching away from root
+# Prepare persistent session directory and permissions
 RUN mkdir -p "$WHATSAPP_SESSION_PATH" && \
     chown -R worker:worker /app "$WHATSAPP_SESSION_PATH"
 
-# Copy and make entrypoint executable BEFORE switching user
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# Configure entrypoint
+COPY --chmod=755 entrypoint.sh /app/entrypoint.sh
 
 EXPOSE 3000 8080
 
