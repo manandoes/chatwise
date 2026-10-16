@@ -20,20 +20,25 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
-# Create the worker user once (ignore if it already exists).
-# Separate RUN layers so a failure is unambiguous.
+# Create the worker user once (separate RUN layers for unambiguous failures).
 RUN addgroup --system worker 2>/dev/null || true
 RUN adduser --system --ingroup worker --home /app worker 2>/dev/null || true
 
-# Dependencies first for layer caching
+# Install production dependencies (skip postinstall: prisma generate runs later
+# with proper env vars, and avoids a failed generate here where DATABASE_URL
+# is unset).
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
-RUN npm ci --include=dev
+RUN npm ci --ignore-scripts
+
+# Install devDependencies so prisma CLI is available for the build step.
+RUN npm ci --include=dev --ignore-scripts
 
 # Source code
 COPY . .
 
-# Build with dummy env vars (runtime uses real values from .env)
+# Build with dummy env vars (runtime uses real values from .env).
+# prisma generate is run explicitly here after the dummy DATABASE_URL is set.
 RUN DATABASE_URL="postgresql://dummy:dummy@localhost/dummy" \
     AUTH_SECRET="dummy-secret-for-build-only" \
     npm run build
