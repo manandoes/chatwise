@@ -132,6 +132,18 @@ if [ "${#missing[@]}" -gt 0 ]; then
   exit 1
 fi
 
+# Catch the common mistake of leaving a placeholder hostname in DATABASE_URL.
+# A real PostgreSQL DSN starts with "postgresql://" — anything else is either
+# a placeholder or a misconfiguration, and Prisma will fail at runtime with a
+# confusing "Can't reach database server" error rather than giving a hint.
+db_url="$(read_env_var DATABASE_URL)"
+if [[ "$db_url" != postgresql://* ]]; then
+  echo "DATABASE_URL in $ENV_FILE does not look like a PostgreSQL connection string:" >&2
+  echo "  Got: $db_url" >&2
+  echo "  Expected something starting with: postgresql://user:pass@host:port/db" >&2
+  exit 1
+fi
+
 # A real, documented footgun (README.md, .env.example): the pooled Supabase
 # URL is for serverless. The worker is a long-lived process and should use
 # the direct connection instead.
