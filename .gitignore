@@ -90,3 +90,4 @@ $RECYCLE.BIN/
 # scratch
 tmp/
 temp/
+tmpnpm-cache/

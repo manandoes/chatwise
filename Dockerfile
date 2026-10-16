@@ -24,24 +24,19 @@ WORKDIR /app
 RUN addgroup --system worker 2>/dev/null || true
 RUN adduser --system --ingroup worker --home /app worker 2>/dev/null || true
 
-# Install production dependencies (skip postinstall: prisma generate runs later
-# with proper env vars, and avoids a failed generate here where DATABASE_URL
-# is unset).
+# Install all dependencies (skip lifecycle scripts to avoid premature prisma generate).
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
-RUN npm ci --ignore-scripts
-
-# Install devDependencies so prisma CLI is available for the build step.
-RUN npm ci --include=dev --ignore-scripts
+RUN npm install --ignore-scripts
 
 # Source code
 COPY . .
 
 # Build with dummy env vars (runtime uses real values from .env).
-# prisma generate is run explicitly here after the dummy DATABASE_URL is set.
+# prisma generate runs explicitly here with proper env, then next build.
 RUN DATABASE_URL="postgresql://dummy:dummy@localhost/dummy" \
     AUTH_SECRET="dummy-secret-for-build-only" \
-    npm run build
+    npx prisma generate && npm run build
 
 # Set up permissions before switching away from root
 RUN mkdir -p "$WHATSAPP_SESSION_PATH" && \
