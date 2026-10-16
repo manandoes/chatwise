@@ -35,6 +35,10 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
+# Create the worker user once (separate RUN layers for unambiguous failures).
+RUN addgroup --system worker 2>/dev/null || true
+RUN adduser --system --ingroup worker --home /app worker 2>/dev/null || true
+
 # Copied ahead of the rest of the source so `npm ci` is only re-run when a
 # dependency, or the Prisma schema its postinstall hook generates from,
 # actually changes.
@@ -44,14 +48,9 @@ RUN npm ci
 
 COPY . .
 
-# Runs as its own user rather than root. whatsapp-web.js already launches
-# Chromium with --no-sandbox (worker.ts), which is what makes a non-root
-# container user compatible with Chromium's sandboxing in the first place.
-# Create non-root user (|| true so rebuilding is safe)
-RUN groupadd --system worker 2>/dev/null || true \
-    && useradd --system --gid worker --home-dir /app worker 2>/dev/null || true \
-    && mkdir -p "$WHATSAPP_SESSION_PATH" \
-    && chown -R worker:worker /app "$WHATSAPP_SESSION_PATH"
+RUN mkdir -p "$WHATSAPP_SESSION_PATH" && \
+    chown -R worker:worker /app "$WHATSAPP_SESSION_PATH"
+
 USER worker
 
 CMD ["node", "--conditions=react-server", "whatsapp-connectors/web-qr/session-manager.ts"]

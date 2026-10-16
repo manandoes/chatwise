@@ -20,6 +20,11 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
+# Create the worker user once (ignore if it already exists).
+# Separate RUN layers so a failure is unambiguous.
+RUN addgroup --system worker 2>/dev/null || true
+RUN adduser --system --ingroup worker --home /app worker 2>/dev/null || true
+
 # Dependencies first for layer caching
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
@@ -33,11 +38,9 @@ RUN DATABASE_URL="postgresql://dummy:dummy@localhost/dummy" \
     AUTH_SECRET="dummy-secret-for-build-only" \
     npm run build
 
-# Create non-root user and set permissions (|| true so rebuilding is safe)
-RUN groupadd --system worker 2>/dev/null || true \
-    && useradd --system --gid worker --home-dir /app worker 2>/dev/null || true \
-    && mkdir -p "$WHATSAPP_SESSION_PATH" \
-    && chown -R worker:worker /app "$WHATSAPP_SESSION_PATH"
+# Set up permissions before switching away from root
+RUN mkdir -p "$WHATSAPP_SESSION_PATH" && \
+    chown -R worker:worker /app "$WHATSAPP_SESSION_PATH"
 
 # Copy and make entrypoint executable BEFORE switching user
 COPY entrypoint.sh /app/entrypoint.sh
