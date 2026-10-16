@@ -13,11 +13,17 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "./generated/prisma/client.ts";
 
 function createPrismaClient() {
-  const connectionString = process.env.DATABASE_URL;
+  // The running app reads DATABASE_URL (pooled, for serverless). The always-on
+  // worker is long-lived and should use DIRECT_URL (direct, port 5432) — the
+  // pooler adds latency and connection churn that serverless needs but a VM
+  // does not. We use a truthiness check (not ??) because an empty string is
+  // a common way to say "not set" in .env files and ?? would treat it as real.
+  const directUrl = process.env.DIRECT_URL?.trim();
+  const connectionString = directUrl || process.env.DATABASE_URL;
 
   if (!connectionString) {
     throw new Error(
-      "DATABASE_URL is not set. Copy .env.example to .env and fill it in.",
+      "DIRECT_URL or DATABASE_URL is not set. Copy .env.example to .env and fill it in.",
     );
   }
 

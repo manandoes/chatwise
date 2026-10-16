@@ -55,7 +55,11 @@ REMOTE_DIR="/opt/chatwise"
 # The worker's actual env surface (whatsapp-connectors/web-qr, lib/db.ts,
 # lib/redis.ts) — CHROME_PATH and WHATSAPP_SESSION_PATH are already baked
 # into Dockerfile.worker, so they're deliberately not re-sent here.
-REQUIRED_VARS=(DATABASE_URL REDIS_URL ENCRYPTION_KEY GEMINI_API_KEY)
+#
+# Use DIRECT_URL (port 5432, direct connection) not DATABASE_URL (port 6543,
+# pooled/Supabase) — the worker is a long-lived process and does not need a
+# pooler. DATABASE_URL is still shipped as a fallback so lib/db.ts can read it.
+REQUIRED_VARS=(DIRECT_URL REDIS_URL ENCRYPTION_KEY GEMINI_API_KEY)
 
 DO_DESTROY=false
 SKIP_CONFIRM=false
@@ -132,27 +136,16 @@ if [ "${#missing[@]}" -gt 0 ]; then
   exit 1
 fi
 
-# Catch the common mistake of leaving a placeholder hostname in DATABASE_URL.
+# Catch the common mistake of leaving a placeholder hostname in DIRECT_URL.
 # A real PostgreSQL DSN starts with "postgresql://" — anything else is either
 # a placeholder or a misconfiguration, and Prisma will fail at runtime with a
 # confusing "Can't reach database server" error rather than giving a hint.
-db_url="$(read_env_var DATABASE_URL)"
+db_url="$(read_env_var DIRECT_URL)"
 if [[ "$db_url" != postgresql://* ]]; then
-  echo "DATABASE_URL in $ENV_FILE does not look like a PostgreSQL connection string:" >&2
+  echo "DIRECT_URL in $ENV_FILE does not look like a PostgreSQL connection string:" >&2
   echo "  Got: $db_url" >&2
   echo "  Expected something starting with: postgresql://user:pass@host:port/db" >&2
   exit 1
-fi
-
-# A real, documented footgun (README.md, .env.example): the pooled Supabase
-# URL is for serverless. The worker is a long-lived process and should use
-# the direct connection instead.
-db_url="$(read_env_var DATABASE_URL)"
-if [[ "$db_url" == *":6543"* ]]; then
-  echo "Warning: DATABASE_URL in $ENV_FILE looks like the pooled (6543) Supabase"
-  echo "  string. The worker is long-lived, not serverless — use the direct"
-  echo "  (5432) string for it instead (README.md 'Deploying' §3)."
-  echo
 fi
 
 echo "About to deploy the WhatsApp worker:"

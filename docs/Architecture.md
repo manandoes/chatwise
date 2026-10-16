@@ -336,7 +336,7 @@ Designed so a non-technical person can open the file tree and understand what's 
 │   └── Memory.md
 │
 ├── .env.example                        # Documented list of required environment variables
-├── prisma7.config.ts                   # Prisma 7 config — points at the schema and reads DATABASE_URL
+├── prisma7.config.ts                   # Prisma 7 config — points at the schema and reads DIRECT_URL (falsy → DATABASE_URL)
 ├── components.json                     # shadcn/ui settings (which style, where components go)
 ├── next.config.ts
 ├── package.json

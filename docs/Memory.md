@@ -913,7 +913,8 @@ These are docs/PRD.md §10's open questions. None blocked Phase 0.
   change is connection wiring: the app uses the **pooled** URL (port 6543) and
   migrations use the **direct** URL (port 5432), because a transaction pooler
   cannot run schema changes. Prisma 7 has no `directUrl` setting, so the split is
-  `lib/db.ts` (pooled, from `DATABASE_URL`) versus `prisma7.config.ts` (direct,
+  `lib/db.ts` (prefers `DIRECT_URL` for the always-on worker, falls back to
+  `DATABASE_URL` for serverless/locally) versus `prisma7.config.ts` (direct,
   from `DIRECT_URL`).
 - **`SHADOW_DATABASE_URL` added** as an optional variable. `prisma migrate dev`
   rehearses each migration on a scratch database it normally creates itself,
@@ -1177,8 +1178,8 @@ Fill in, in `.env`:
 
 | Variable | Where it comes from |
 |---|---|
-| `DATABASE_URL` | Supabase's **pooled** URL (port 6543) |
-| `DIRECT_URL` | Supabase's **direct** URL (port 5432) — migrations only |
+| `DATABASE_URL` | Supabase's **pooled** URL (port 6543) — app only |
+| `DIRECT_URL` | Supabase's **direct** URL (port 5432) — worker + migrations |
 | `AUTH_SECRET` | `openssl rand -base64 32` |
 
 ```bash

@@ -1,7 +1,8 @@
 // Settings the Prisma command-line tools use (creating and applying migrations).
 //
 // Note this is NOT how the running app connects to the database — that is
-// lib/db.ts, which uses the pooled DATABASE_URL.
+// lib/db.ts, which reads DIRECT_URL first (direct, for the always-on worker),
+// then falls back to DATABASE_URL (pooled, for the Next.js serverless app).
 //
 // Migrations must use a *direct* database connection. Supabase gives you two
 // connection strings: a pooled one (port 6543) for the app, and a direct one
