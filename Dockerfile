@@ -33,9 +33,9 @@ RUN DATABASE_URL="postgresql://dummy:dummy@localhost/dummy" \
     AUTH_SECRET="dummy-secret-for-build-only" \
     npm run build
 
-# Create non-root user and set permissions
-RUN groupadd --system worker \
-    && useradd --system --gid worker --home-dir /app worker \
+# Create non-root user and set permissions (|| true so rebuilding is safe)
+RUN groupadd --system worker 2>/dev/null || true \
+    && useradd --system --gid worker --home-dir /app worker 2>/dev/null || true \
     && mkdir -p "$WHATSAPP_SESSION_PATH" \
     && chown -R worker:worker /app "$WHATSAPP_SESSION_PATH"
 
